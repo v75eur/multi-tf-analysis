@@ -57,6 +57,23 @@ section h2{color:var(--cyan);font-size:1.1rem}
 .fraicheur.warn{color:var(--yellow)}
 .fraicheur.ferme{color:#9aa0b4}
 
+/* ═════ TIMING D'ENTRÉE (NOUVEAU, EN GROS) ═════ */
+.timing{border-radius:12px;padding:.7rem .9rem;margin:.4rem 0 .7rem;border-left:5px solid var(--yellow);background:var(--card2);display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;font-size:.85rem}
+.timing.vert{border-left-color:var(--green);background:rgba(40,200,64,.08)}
+.timing.jaune{border-left-color:var(--yellow);background:rgba(255,189,46,.08)}
+.timing.rouge{border-left-color:var(--red);background:rgba(255,95,87,.08)}
+.timing-emoji{font-size:1.4rem;flex-shrink:0}
+.timing-niveau{font-weight:700;font-size:.95rem}
+.timing.vert .timing-niveau{color:var(--green)}
+.timing.jaune .timing-niveau{color:var(--yellow)}
+.timing.rouge .timing-niveau{color:var(--red)}
+.timing-txt{flex:1;min-width:200px;font-size:.78rem;color:#c8cde0;line-height:1.45}
+.timing-lot{font-weight:700;padding:.25rem .7rem;border-radius:50px;background:rgba(0,212,255,.15);color:var(--cyan);font-size:.72rem;white-space:nowrap}
+.timing-mini{display:inline-block;font-size:.65rem;padding:.1rem .4rem;border-radius:50px;font-weight:600;margin-left:.2rem}
+.timing-mini.vert{background:rgba(40,200,64,.2);color:var(--green)}
+.timing-mini.jaune{background:rgba(255,189,46,.2);color:var(--yellow)}
+.timing-mini.rouge{background:rgba(255,95,87,.2);color:var(--red)}
+
 /* ═════ VERDICT DES FILTRES ═════ */
 .verdict{border-radius:12px;padding:.8rem .9rem;margin:.4rem 0 .7rem;border:2px solid rgba(255,255,255,.08);background:var(--card2)}
 .verdict.vert{border-color:var(--green)}
@@ -75,7 +92,7 @@ section h2{color:var(--cyan);font-size:1.1rem}
 .filtre-nom{font-weight:700;color:var(--cyan);min-width:110px;flex-shrink:0}
 .filtre-txt{flex:1}
 
-/* ═════ CALCULATEUR DE TENDANCE GÉNÉRALE ═════ */
+/* ═════ TENDANCE GÉNÉRALE ═════ */
 .general{background:var(--card2);border-radius:12px;padding:.8rem .9rem;margin:.4rem 0 .7rem;border:2px solid rgba(255,255,255,.08)}
 .general.vert{border-color:var(--green)}
 .general.rouge{border-color:var(--red)}
@@ -113,7 +130,7 @@ section h2{color:var(--cyan);font-size:1.1rem}
 .conseil.jaune{background:rgba(255,189,46,.08);border-left:3px solid var(--yellow);color:#f0d590}
 .conseil.gris{background:rgba(255,255,255,.04);border-left:3px solid #6b7088;color:#b8bdd0}
 
-.alerte{padding:.4rem .8rem;border-radius:8px;font-size:.78rem;margin-bottom:.4rem;line-height:1.4}
+.alerte{padding:.4rem .8rem;border-radius:8px;font-size:.78rem;margin-bottom:.4rem;line-height:1.5}
 .alerte.vert{background:rgba(40,200,64,.08);color:#a0e8a8}
 .alerte.jaune{background:rgba(255,189,46,.08);color:#f0d590}
 
@@ -122,9 +139,13 @@ section h2{color:var(--cyan);font-size:1.1rem}
 .guide.orange{border-color:var(--yellow)}
 .guide-titre{font-weight:700;font-size:.95rem;margin-bottom:.5rem}
 .guide .raisons{margin:0 0 .6rem 1.1rem;font-size:.78rem;color:#f0d590;line-height:1.5}
-.guide .etapes{margin:0 0 .6rem 1.2rem;font-size:.82rem;line-height:1.65}
-.guide .etapes li{margin-bottom:.35rem}
+.guide .etapes{margin:0 0 .6rem 1.2rem;font-size:.82rem;line-height:1.75}
+.guide .etapes li{margin-bottom:.5rem}
 .lotres{color:var(--cyan)}
+.lot-conseil{margin:.5rem 0 .5rem 1.2rem;padding:.5rem .7rem;border-radius:8px;font-size:.8rem;line-height:1.5;border-left:3px solid var(--yellow);background:rgba(255,189,46,.08)}
+.lot-conseil.vert{border-left-color:var(--green);background:rgba(40,200,64,.08);color:#a0e8a8}
+.lot-conseil.jaune{border-left-color:var(--yellow);background:rgba(255,189,46,.08);color:#f0d590}
+.lot-conseil.rouge{border-left-color:var(--red);background:rgba(255,95,87,.08);color:#ffb0aa}
 .guide .note{margin:0}
 
 .conditions-row{display:flex;flex-wrap:wrap;gap:.3rem;margin:.4rem 0 .9rem}
@@ -199,4 +220,6 @@ td{padding:.4rem;border-bottom:1px solid rgba(255,255,255,.05);white-space:nowra
   .align-item{font-size:.7rem;padding:.2rem .5rem}
   .filtre-nom{min-width:80px;font-size:.68rem}
   .filtre-txt{font-size:.7rem}
+  .timing-txt{font-size:.72rem}
+  .timing-niveau{font-size:.85rem}
 }

@@ -18,7 +18,6 @@
 
 <main>
 
-{# ═════════ BANDEAU SESSION EN COURS ═════════ #}
 <div class="bandeau-session {{ 'vert' if session_act.qualite in ('forte','excellente') else 'jaune' }}">
 🕐 <b>Session en cours :</b> {{ session_act.txt }}
 {% if session_act.qualite == 'faible' %}
@@ -59,7 +58,19 @@
 
 <div class="fraicheur {{ d.fraicheur.etat }}">{{ d.fraicheur.texte }}</div>
 
-{# ═════════ VERDICT DES FILTRES (NOUVEAU) ═════════ #}
+{# ═════ TIMING D'ENTRÉE (NOUVEAU, EN GROS) ═════ #}
+{% if c.timing %}
+<div class="timing {{ c.timing.couleur }}">
+<span class="timing-emoji">{{ c.timing.emoji }}</span>
+<span class="timing-niveau">Timing d'entrée : {{ c.timing.niveau }}</span>
+<span class="timing-txt">{{ c.timing.txt }}</span>
+{% if c.timing.niveau != 'TARDIF' %}
+<span class="timing-lot">→ {{ c.timing.lot_conseil }}</span>
+{% endif %}
+</div>
+{% endif %}
+
+{# ═════ VERDICT DES FILTRES ═════ #}
 {% if fl %}
 <div class="verdict {{ fl.couleur }}">
 <div class="verdict-titre">
@@ -77,7 +88,7 @@
 </div>
 {% endif %}
 
-{# ═════════ CALCULATEUR DE TENDANCE GÉNÉRALE ═════════ #}
+{# ═════ TENDANCE GÉNÉRALE ═════ #}
 {% if gen %}
 <div class="general {{ gen.couleur }}">
 <div class="general-titre">
@@ -146,21 +157,24 @@ Score pondéré : <b class="{{ gen.couleur }}">{{ '%+.1f'|format(gen.score_pct) 
 <ul class="raisons">{% for r in g.raisons %}<li>{{ r }}</li>{% endfor %}</ul>
 {% endif %}
 <ol class="etapes">
-<li><b>Avant d'entrer :</b> si une grosse annonce arrive dans l'heure (inflation, emploi américain, banque centrale), alors n'entre pas.</li>
-<li><b>Quand :</b> à la clôture de la bougie M5, vers <b>{{ g.heure }}</b> (heure du Bénin). Si le signal a disparu à ce moment, alors n'entre pas.</li>
+<li><b>Avant d'entrer :</b> vérifie qu'aucune grosse annonce économique n'arrive dans l'heure (inflation, emploi américain, décision de banque centrale). Si c'est le cas, n'entre pas : la volatilité peut te sortir sur le stop en quelques secondes.</li>
+<li><b>Quand :</b> à la clôture de la bougie M5, vers <b>{{ g.heure }}</b> (heure du Bénin). Si à ce moment-là le signal a disparu (les TF ne sont plus alignés), n'entre pas : un signal qui s'évapore est un piège.</li>
 <li><b>Ordre :</b> {{ 'ACHAT' if g.sens == 'ACHAT' else 'VENTE' }} au marché, autour de <b>{{ g.prix }}</b>.</li>
 {% if g.stop %}
-<li><b>Stop loss :</b> <b>{{ g.stop }}</b>. Mets-le tout de suite et ne l'éloigne jamais.</li>
-<li><b>Objectif :</b> <b>{{ g.objectif }}</b> (ratio gain/risque {{ g.ratio }}).</li>
-<li><b>Lot :</b> <span class="lotbox" data-dist="{{ g.dist }}" data-gain="{{ g.dist_obj }}" data-contrat="{{ g.contrat or '' }}"><span class="lotres">Entre ton capital en haut de la page.</span></span></li>
-<li><b>Si le prix atteint {{ g.moitie }}</b> (la moitié du chemin) : alors tu peux remonter ton stop à ton prix d'entrée, pour ne plus perdre.</li>
+<li><b>Stop loss :</b> <b>{{ g.stop }}</b>. Place-le immédiatement après l'entrée et ne l'éloigne JAMAIS. Si le prix va contre toi, tu perds ce que tu as prévu de perdre, pas plus.</li>
+<li><b>Objectif :</b> <b>{{ g.objectif }}</b> (ratio gain/risque {{ g.ratio }}). Si le ratio est ≥ 2, c'est très bon. Si c'est entre 1,5 et 2, c'est acceptable. En dessous, passe ton tour.</li>
+<li><b>Lot :</b> <span class="lotbox" data-dist="{{ g.dist }}" data-gain="{{ g.dist_obj }}" data-contrat="{{ g.contrat or '' }}" data-niveau="{{ g.lot_niveau }}"><span class="lotres">Entre ton capital en haut de la page.</span></span></li>
+<div class="lot-conseil {{ 'vert' if g.lot_niveau == 'PLEIN' else 'jaune' if g.lot_niveau == 'DEMI' else 'rouge' }}">
+🧮 <b>Conseil de lot (timing {{ g.timing.niveau if g.timing else '?' }}) :</b> {{ g.lot_txt }}
+</div>
+<li><b>Gestion en cours de route :</b> si le prix atteint <b>{{ g.moitie }}</b> (la moitié du chemin vers l'objectif), tu peux remonter ton stop à ton prix d'entrée. À partir de ce moment, tu ne peux plus perdre, seulement gagner moins ou gagner plus.</li>
 {% else %}
-<li><b>Stop et objectif :</b> pas de niveaux clairs pour le moment, donc n'entre pas.</li>
+<li><b>Stop et objectif :</b> pas de niveaux clairs devant toi. N'entre pas. Attends qu'un range clair se forme avec un creux et un sommet bien identifiables.</li>
 {% endif %}
-<li><b>Si ça tourne mal :</b> si le stop est touché, alors accepte la perte et n'entre pas tout de suite de nouveau. Si la tendance H1 s'inverse avant l'objectif, alors tu peux fermer à la main.</li>
-<li><b>Règles de prudence :</b> 1 % du capital au maximum par trade. Après 2 pertes de suite dans la journée, arrête-toi.</li>
+<li><b>Si ça tourne mal :</b> si le stop est touché, accepte la perte et arrête-toi pour cette paire au moins 30 minutes. Ne re-entre pas « pour te refaire » juste après. Si la tendance H1 s'inverse avant ton objectif, tu peux fermer à la main — mieux vaut un petit gain qu'une grosse perte.</li>
+<li><b>Règles de survie :</b> maximum 1 % du capital par trade. Après 2 pertes de suite dans la même journée, arrête-toi jusqu'au lendemain. Le marché sera encore là demain, ton capital peut-être pas.</li>
 </ol>
-<div class="note">Teste d'abord en compte démo pendant 2 à 3 semaines. Ce guide aide à filtrer les trades, il ne garantit aucun gain.</div>
+<div class="note">Teste d'abord en compte démo pendant 2 à 3 semaines minimum avant de risquer de l'argent réel. Ce guide aide à filtrer les trades, il ne garantit aucun gain. La discipline (respecter le stop, ne pas sur-trader, tenir un journal) compte plus que le signal lui-même.</div>
 </div>
 {% endif %}
 
@@ -262,7 +276,16 @@ Score pondéré : <b class="{{ gen.couleur }}">{{ '%+.1f'|format(gen.score_pct) 
 <td>{{ 'H' if t.divergence == 'haussiere' else 'B' if t.divergence == 'baissiere' else '—' }}</td>
 <td>{{ t.ema5 or '—' }}</td>
 <td>{{ t.ema25 or '—' }}</td>
-<td class="{% if t.ema_signal == 'haussier' %}vert{% elif t.ema_signal == 'baissier' %}rouge{% endif %}"><b>{{ t.ema_signal or '—' }}</b> <span class="pct">{{ t.ema_depuis }} bg</span></td>
+<td class="{% if t.ema_signal == 'haussier' %}vert{% elif t.ema_signal == 'baissier' %}rouge{% endif %}"><b>{{ t.ema_signal or '—' }}</b>
+{% if tf == 'M5' and t.ema_depuis is not none %}
+{% set dep = t.ema_depuis %}
+{% if dep <= 5 %}<span class="timing-mini vert">🔥 {{ dep }} bg</span>
+{% elif dep <= 12 %}<span class="timing-mini jaune">⏳ {{ dep }} bg</span>
+{% else %}<span class="timing-mini rouge">❌ {{ dep }} bg</span>{% endif %}
+{% else %}
+<span class="pct">{{ t.ema_depuis }} bg</span>
+{% endif %}
+</td>
 <td>{% if t.cassure.sens == 'haussiere' %}<span class="vert">↑</span>{% elif t.cassure.sens == 'baissiere' %}<span class="rouge">↓</span>{% else %}—{% endif %}{% if t.cassure.il_y_a is not none %} <span class="pct">{{ 'now' if t.cassure.il_y_a == 0 else t.cassure.il_y_a ~ ' bg' }}</span>{% endif %}</td>
 <td>{% for m in t.motifs %}<span class="tag {{ m.cls }}">{{ m.txt }}</span> {% else %}—{% endfor %}</td>
 </tr>
@@ -274,7 +297,6 @@ Score pondéré : <b class="{{ gen.couleur }}">{{ '%+.1f'|format(gen.score_pct) 
 </section>
 {% endfor %}
 
-{# ═════════ JOURNAL DE BORD (NOUVEAU) ═════════ #}
 {% if historique %}
 <details class="journal">
 <summary>📒 Journal de bord — 10 derniers signaux</summary>
@@ -299,7 +321,8 @@ Score pondéré : <b class="{{ gen.couleur }}">{{ '%+.1f'|format(gen.score_pct) 
 <details class="aide">
 <summary>ℹ️ Comment lire</summary>
 <ul>
-<li><b>🛡️ Verdict global</b> : combine tous les filtres (session, volatilité, tendance H4/H1, duplication, corrélation). Si c'est "BLOQUÉ" en rouge, ne prends pas le trade même si le signal est vert. Si c'est "PRUDENCE" en jaune, réduis ton lot ou attends. Si c'est "FEU VERT", alors tu peux trader.</li>
+<li><b>🔥 Timing d'entrée</b> : c'est le plus important. Il regarde combien de bougies M5 se sont écoulées depuis le croisement EMA5/EMA25. Si ≤ 5 bougies → FRAIS (lot plein). Si 6-12 → EN COURS (demi-lot). Si > 12 → TARDIF (n'entre pas, attends le prochain croisement). C'est ça qui fait la différence entre entrer au début du mouvement et acheter le sommet.</li>
+<li><b>🛡️ Verdict global</b> : combine tous les filtres (session, volatilité, tendance H4/H1, timing, duplication, corrélation). Si c'est "BLOQUÉ" en rouge, ne prends pas le trade même si le signal est vert. Si c'est "PRUDENCE" en jaune, réduis ton lot ou attends. Si c'est "FEU VERT", alors tu peux trader.</li>
 <li><b>Session</b> : les meilleures heures sont le chevauchement Londres+New York (15h-18h heure du Bénin) et Londres seul (9h-15h). En Asie (1h-9h) et la nuit, les signaux sont peu fiables.</li>
 <li><b>Tendance H4/H1</b> : si H4 ET H1 sont contre ton signal, c'est un pullback (piège) → BLOQUÉ. Si un seul est contre → PRUDENCE, réduis ton lot.</li>
 <li><b>Signal récent</b> : si le même signal a été donné il y a moins de 30 min, ce n'est pas un nouveau signal, c'est le même mouvement.</li>
@@ -374,8 +397,10 @@ function calcLots() {
     var dist = parseFloat(el.dataset.dist);
     var gain = parseFloat(el.dataset.gain);
     var ct = parseFloat(el.dataset.contrat);
+    var niveau = el.dataset.niveau || 'PLEIN';
     if (!cap || !risk) { out.textContent = 'Entre ton capital en haut de la page pour calculer le lot.'; return; }
     var maxp = cap * risk / 100;
+    if (niveau === 'DEMI') maxp = maxp / 2;
     if (!ct) {
       out.textContent = 'Lot non calculé pour cet actif. Ta perte maximum est ' + maxp.toFixed(2) + ' $. Si ton stop te fait perdre plus, alors baisse le lot.';
       return;
@@ -385,7 +410,8 @@ function calcLots() {
       out.textContent = 'Ton capital est trop petit pour ce stop : même 0.01 lot risque plus de ' + risk + ' %. Ne prends pas ce trade.';
       return;
     }
-    out.textContent = 'Lot conseillé : ' + lot.toFixed(2) + ' → perte max ≈ ' + (lot * dist * ct).toFixed(2) + ' $ si le stop est touché · gain ≈ ' + (lot * gain * ct).toFixed(2) + ' $ à l\'objectif.';
+    var prefix = niveau === 'DEMI' ? 'Lot conseillé (demi) : ' : 'Lot conseillé : ';
+    out.textContent = prefix + lot.toFixed(2) + ' → perte max ≈ ' + (lot * dist * ct).toFixed(2) + ' $ si le stop est touché · gain ≈ ' + (lot * gain * ct).toFixed(2) + ' $ à l\'objectif.';
   });
 }
 

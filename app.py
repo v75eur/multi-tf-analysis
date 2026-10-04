@@ -32,15 +32,9 @@ DERIV_WS = "wss://api.derivws.com/trading/v1/options/ws/public"
 CACHE_SEC = {"1h": 300, "30m": 180, "15m": 120, "5m": 60}
 _cache_yahoo = {}
 
-# Pondération : petits TF plus lourds (mouvement récent)
 POIDS_TF = {"M5": 5, "M15": 4, "M30": 3, "H1": 2, "H4": 1}
 ORDRE_TF = ["M5", "M15", "M30", "H1", "H4"]
 
-# ───────────── SESSIONS DE TRADING (heure du Bénin) ─────────────
-# Asie 01h-09h : éviter (peu de volume sur EURUSD/GBPUSD)
-# Londres 09h-18h : optimale pour EURUSD/GBPUSD
-# New York 15h-23h : optimale pour XAUUSD
-# Chevauchement Londres/NY 15h-18h : meilleure fenêtre
 SESSIONS = {
     "asie":     {"debut": 1,  "fin": 9,  "qualite": "faible",  "txt": "Asie (peu de volume, signaux peu fiables)"},
     "londres":  {"debut": 9,  "fin": 18, "qualite": "forte",   "txt": "Londres (session active, bonne fiabilité)"},
@@ -48,18 +42,22 @@ SESSIONS = {
     "nuit":     {"debut": 23, "fin": 1,  "qualite": "faible",  "txt": "Nuit (marché calme)"},
 }
 
-# Corrélations connues (si deux paires bougent ensemble)
 CORRELATIONS = {
-    "EURUSD": ["GBPUSD"],   # EUR et GBP très corrélés
+    "EURUSD": ["GBPUSD"],
     "GBPUSD": ["EURUSD"],
-    "XAUUSD": [],           # Or souvent inverse du dollar
+    "XAUUSD": [],
     "V75": [],
 }
 
-# Seuils de fiabilité
-SEUIL_VOLATILITE_MIN = 0.05   # % mouvement moyen H1 minimum (sinon marché plat)
-SEUIL_AGITATION_MAX = 70      # % agitation max (sinon marché trop indécis)
-DUREE_SIGNAL_MIN = 30         # minutes avant qu'un nouveau signal identique soit valide
+SEUIL_VOLATILITE_MIN = 0.05
+SEUIL_AGITATION_MAX = 70
+DUREE_SIGNAL_MIN = 30
+
+# ───────────── SEUILS DE TIMING D'ENTRÉE (NOUVEAU) ─────────────
+# ema_depuis = nombre de bougies M5 depuis le croisement EMA5/EMA25
+TIMING_FRAIS_MAX = 5      # ≤ 5 bougies = entrée fraîche, lot plein
+TIMING_MOYEN_MAX = 12     # 6-12 bougies = entrée moyenne, demi-lot
+                          # > 12 bougies = trop tardif, attendre
 
 
 def logged():
@@ -253,7 +251,7 @@ def mouvement_moyen(bougies, n=24):
     return float(np.mean([b["high"] - b["low"] for b in d]))
 
 
-# ───────────── MOTIFS DE BOUGIES / CASSURE ─────────────
+# ───────────── MOTIFS ─────────────
 
 def calc_motifs(bougies):
     b, p = bougies[-1], bougies[-2]
@@ -320,6 +318,42 @@ def analyser(tf, bougies):
         "motif_haussier": mh, "motif_baissier": mb,
         "cassure": calc_cassure(bougies),
         "prix": clotures[-1]
+    }
+
+
+# ───────────── TIMING D'ENTRÉE (NOUVEAU) ─────────────
+
+def calc_timing_entree(m5):
+    """Évalue la qualité du timing d'entrée basé sur ema_depuis.
+    Retourne un dict avec niveau, couleur, txt, lot_conseil."""
+    if not m5 or m5.get("ema_depuis") is None:
+        return None
+    dep = m5["ema_depuis"]
+    if dep <= TIMING_FRAIS_MAX:
+        return {
+            "niveau": "FRAIS",
+            "couleur": "vert",
+            "emoji": "🔥",
+            "txt": f"Croisement EMA M5 très récent ({dep} bougies). Tu entres au tout début du mouvement. Le stop peut être serré, le potentiel est maximal.",
+            "lot_conseil": "LOT PLEIN",
+            "lot_ratio": 1.0,
+        }
+    if dep <= TIMING_MOYEN_MAX:
+        return {
+            "niveau": "EN COURS",
+            "couleur": "jaune",
+            "emoji": "⏳",
+            "txt": f"Croisement EMA M5 il y a {dep} bougies. Le mouvement est déjà bien lancé. Tu entres en milieu de course : le ratio gain/risque est moins bon qu'un croisement frais.",
+            "lot_conseil": "DEMI-LOT",
+            "lot_ratio": 0.5,
+        }
+    return {
+        "niveau": "TARDIF",
+        "couleur": "rouge",
+        "emoji": "❌",
+        "txt": f"Croisement EMA M5 il y a {dep} bougies. Le mouvement est déjà bien avancé : entrer maintenant, c'est acheter le sommet (ou vendre le creux). Le risque de retracement avant ton objectif est élevé.",
+        "lot_conseil": "ATTENDRE LE PROCHAIN CROISEMENT",
+        "lot_ratio": 0.0,
     }
 
 
@@ -407,17 +441,15 @@ def calc_tendance_generale(tfs):
     }
 
 
-# ───────────── FILTRES DE FIABILITÉ (NOUVEAU) ─────────────
+# ───────────── FILTRES ─────────────
 
 def session_actuelle():
-    """Retourne la session en cours (heure du Bénin)."""
     h = datetime.now(BENIN).hour
     if 1 <= h < 9:
         s = SESSIONS["asie"]
     elif 9 <= h < 15:
         s = SESSIONS["londres"]
     elif 15 <= h < 18:
-        # Chevauchement Londres/NY = meilleure fenêtre
         s = {"qualite": "excellente", "txt": "Chevauchement Londres + New York (meilleure fenêtre de la journée)"}
     elif 18 <= h < 23:
         s = SESSIONS["newyork"]
@@ -427,24 +459,18 @@ def session_actuelle():
 
 
 def filtre_volatilite(tfs):
-    """Vérifie que le marché n'est pas plat."""
     h1 = tfs.get("H1")
     if not h1:
         return {"ok": False, "txt": "Pas de données H1 pour évaluer la volatilité.", "cls": "jaune"}
-    mvt = mouvement_moyen([{"high": h1["prix"], "low": h1["prix"], "close": h1["prix"]}], 1)
-    # On prend le % de mouvement H1 depuis les stats
-    # Utilise directement le pct_tendance comme proxy + agitation
     agitation = h1.get("pct_agitation", 0)
     if agitation > SEUIL_AGITATION_MAX:
         return {"ok": False, "cls": "jaune",
-                "txt": f"⚠️ Marché trop agité (agitation H1 = {agitation}%) : les bougies font des allers-retours, le signal est peu fiable. Attends un marché plus directionnel."}
+                "txt": f"⚠️ Marché trop agité (agitation H1 = {agitation}%). Les bougies font beaucoup d'allers-retours : le signal est peu fiable. Attends un marché plus directionnel."}
     return {"ok": True, "cls": "vert",
             "txt": f"✅ Volatilité correcte (agitation H1 = {agitation}%)."}
 
 
 def filtre_tendance_superieure(tfs, sens_signal):
-    """Vérifie que H4 et H1 ne contredisent pas le signal.
-    Si H4 + H1 sont contraires au signal, c'est un pullback = piège."""
     if not sens_signal or sens_signal not in ("haussier", "baissier"):
         return {"ok": True, "cls": "", "txt": ""}
     h4 = tfs.get("H4")
@@ -470,18 +496,14 @@ def filtre_tendance_superieure(tfs, sens_signal):
 
 
 def filtre_session():
-    """Vérifie qu'on est dans une bonne session de trading."""
     s = session_actuelle()
-    if s["qualite"] == "excellente":
-        return {"ok": True, "cls": "vert", "txt": f"✅ {s['txt']}."}
-    if s["qualite"] == "forte":
+    if s["qualite"] in ("excellente", "forte"):
         return {"ok": True, "cls": "vert", "txt": f"✅ {s['txt']}."}
     return {"ok": False, "cls": "jaune",
             "txt": f"⚠️ {s['txt']}. Les signaux en dehors de Londres/New York sont souvent faux à cause du manque de volume. Évite de trader maintenant."}
 
 
 def filtre_duplication(pair, sens, historique):
-    """Vérifie qu'un signal identique n'a pas déjà été donné récemment."""
     if not historique or not sens:
         return {"ok": True, "cls": "", "txt": ""}
     maintenant = time.time()
@@ -496,7 +518,6 @@ def filtre_duplication(pair, sens, historique):
 
 
 def filtre_correlation(pair, sens, autres_cond):
-    """Vérifie que deux paires corrélées n'ont pas le même signal en même temps."""
     if not sens or sens not in ("ACHAT", "VENTE") or not autres_cond:
         return {"ok": True, "cls": "", "txt": ""}
     correlees = CORRELATIONS.get(pair, [])
@@ -512,34 +533,47 @@ def filtre_correlation(pair, sens, autres_cond):
     return {"ok": True, "cls": "", "txt": ""}
 
 
+def filtre_timing(m5):
+    """Ajoute le timing d'entrée comme filtre."""
+    timing = calc_timing_entree(m5)
+    if not timing:
+        return None
+    if timing["niveau"] == "FRAIS":
+        return {"nom": "Timing d'entrée", "ok": True, "cls": "vert",
+                "txt": f"🔥 {timing['txt']}"}
+    if timing["niveau"] == "EN COURS":
+        return {"nom": "Timing d'entrée", "ok": False, "cls": "jaune",
+                "txt": f"⏳ {timing['txt']} Réduis ton lot de moitié."}
+    return {"nom": "Timing d'entrée", "ok": False, "cls": "rouge",
+            "txt": f"❌ {timing['txt']} Attends le prochain croisement."}
+
+
 def filtre_global(tfs, cond_base, pair, sens_signal, historique, autres_cond):
-    """Applique tous les filtres et retourne un verdict global."""
     filtres = []
 
-    # 1. Session
     f_session = filtre_session()
     filtres.append({"nom": "Session", **f_session})
 
-    # 2. Volatilité
     f_vol = filtre_volatilite(tfs)
     filtres.append({"nom": "Volatilité", **f_vol})
 
-    # 3. Tendance supérieure
     if sens_signal:
         f_tend = filtre_tendance_superieure(tfs, sens_signal)
         filtres.append({"nom": "Tendance H4/H1", **f_tend})
 
-    # 4. Duplication
+    if "M5" in tfs:
+        f_timing = filtre_timing(tfs["M5"])
+        if f_timing:
+            filtres.append(f_timing)
+
     f_dup = filtre_duplication(pair, sens_signal, historique)
     if f_dup["txt"]:
         filtres.append({"nom": "Signal récent", **f_dup})
 
-    # 5. Corrélation
     f_corr = filtre_correlation(pair, sens_signal, autres_cond)
     if f_corr["txt"]:
         filtres.append({"nom": "Corrélation", **f_corr})
 
-    # Verdict global
     bloquants = [f for f in filtres if f["ok"] is False and f["cls"] == "rouge"]
     avertissements = [f for f in filtres if f["ok"] is False and f["cls"] == "jaune"]
 
@@ -554,12 +588,12 @@ def filtre_global(tfs, cond_base, pair, sens_signal, historique, autres_cond):
     else:
         verdict = "FEU VERT"
         couleur = "vert"
-        conseil = "✅ Tous les filtres sont au vert. Tu peux trader en respectant le guide."
+        conseil = "✅ Tous les filtres sont au vert. Tu peux trader en respectant le guide, avec le lot plein."
 
     return {"filtres": filtres, "verdict": verdict, "couleur": couleur, "conseil": conseil}
 
 
-# ───────────── STATISTIQUES GÉNÉRALES ─────────────
+# ───────────── STATS ─────────────
 
 def calc_stats(pair, h1, tfs):
     if len(h1) < 30:
@@ -623,7 +657,7 @@ def calc_stats(pair, h1, tfs):
     }
 
 
-# ───────────── SUPPORTS / RÉSISTANCES ─────────────
+# ───────────── Niveaux ─────────────
 
 def calc_niveaux(pair, prix, m15, h1):
     res, sup = [], []
@@ -644,7 +678,7 @@ def calc_niveaux(pair, prix, m15, h1):
     }
 
 
-# ───────────── STOP LOSS / OBJECTIF ─────────────
+# ───────────── SL/TP ─────────────
 
 def cote_sltp(pair, prix, stop, obj, sens):
     if stop is None or obj is None:
@@ -689,7 +723,7 @@ def calc_sltp(pair, prix, m15):
             "vente": cote_sltp(pair, prix, stop_v, obj_v, "vente")}
 
 
-# ───────────── MEILLEURES HEURES ─────────────
+# ───────────── HEURES ─────────────
 
 def calc_heures(h1):
     par = {}
@@ -714,7 +748,7 @@ def calc_heures(h1):
     }
 
 
-# ───────────── TEST SUR LE PASSÉ ─────────────
+# ───────────── BACKTEST ─────────────
 
 def tendance_simple(cl):
     x = np.arange(len(cl))
@@ -873,7 +907,7 @@ def conditions_paire(tfs, ferme=False, generale=None):
     if manque:
         return {"signal": "?", "couleur": "jaune", "bonus": False,
                 "conseil": "Données manquantes : " + ", ".join(manque), "details": {}, "alertes": [],
-                "generale": generale}
+                "generale": generale, "timing": None}
 
     h1, m30, m15, m5 = tfs["H1"], tfs["M30"], tfs["M15"], tfs["M5"]
     h4 = tfs.get("H4")
@@ -894,20 +928,23 @@ def conditions_paire(tfs, ferme=False, generale=None):
         return d, bonus, fl
 
     res = {s: verifier(s) for s in ("haussier", "baissier")}
+    timing = calc_timing_entree(m5)
     base = None
     for sens, nom, couleur in (("haussier", "ACHAT", "vert"), ("baissier", "VENTE", "rouge")):
         d, bonus, fl = res[sens]
         if all(d.values()):
-            conseil = f"✅ Signal {nom} détecté. Entre à la clôture M5 seulement si le guide ci-dessous est au vert."
+            conseil = f"✅ Signal {nom} détecté : M15, M30 et H1 sont alignés {sens}s, les acheteurs dominent sur les 3, et l'EMA M5 est croisée dans le bon sens."
             if bonus:
-                conseil = f"⭐ Signal {nom} détecté, H4 dans le même sens. Entre à la clôture M5 seulement si le guide ci-dessous est au vert."
-            dep = m5["ema_depuis"] or 0
-            if dep <= 3:
-                conseil += " 🔥 Croisement EMA récent."
-            elif dep > 12:
-                conseil += f" ⚠️ EMA croisée depuis {dep} bougies : entrée tardive."
+                conseil = f"⭐ Signal {nom} renforcé : H4 est aussi {sens} en plus des 3 autres TF. C'est un signal de qualité."
+            if timing:
+                if timing["niveau"] == "FRAIS":
+                    conseil += f" 🔥 Le croisement EMA M5 est très récent ({m5['ema_depuis']} bougies) : tu entres au début du mouvement. Lot plein autorisé."
+                elif timing["niveau"] == "EN COURS":
+                    conseil += f" ⏳ Le croisement EMA M5 a {m5['ema_depuis']} bougies : le mouvement est déjà lancé. Réduis ton lot de moitié."
+                else:
+                    conseil += f" ❌ Le croisement EMA M5 a {m5['ema_depuis']} bougies : c'est trop tardif, le mouvement est déjà bien avancé. Attends le prochain croisement plutôt que d'acheter le sommet."
             details = {**d, f"H4 {fl}": bonus}
-            base = {"signal": nom, "couleur": couleur, "bonus": bonus, "conseil": conseil, "details": details}
+            base = {"signal": nom, "couleur": couleur, "bonus": bonus, "conseil": conseil, "details": details, "timing": timing}
             break
 
     if base is None:
@@ -916,9 +953,9 @@ def conditions_paire(tfs, ferme=False, generale=None):
         nom = "ACHAT" if meilleur == "haussier" else "VENTE"
         manque_c = [k for k, v in d.items() if not v]
         ok = len(d) - len(manque_c)
-        conseil = f"⏸️ Attendre : {ok}/{len(d)} conditions {nom}. Il manque : {', '.join(manque_c)}."
+        conseil = f"⏸️ Attendre : {ok}/{len(d)} conditions {nom} réunies. Il manque encore : {', '.join(manque_c)}. Le marché n'est pas encore aligné, ne force pas l'entrée."
         base = {"signal": "ATTENDRE", "couleur": "jaune", "bonus": False, "conseil": conseil,
-                "details": {**d, f"H4 {fl}": bonus}}
+                "details": {**d, f"H4 {fl}": bonus}, "timing": timing}
 
     base["alertes"] = []
     base["generale"] = generale
@@ -939,40 +976,40 @@ def alertes_signal(cond, tfs, niv, sltp, bt, mm_h1):
     prix = m5["prix"]
 
     if achat and niv["res_brut"] is not None and niv["res_brut"] - prix < mm_h1:
-        al.append({"txt": f"⚠️ Résistance proche ({niv['res']}) : le prix peut rebondir contre ce plafond.", "cls": "jaune"})
+        al.append({"txt": f"⚠️ Une résistance est proche ({niv['res']}). Le prix risque de rebondir contre ce plafond avant d'aller plus loin. Attends qu'il la casse franchement, ou réduis ton objectif.", "cls": "jaune"})
     if not achat and niv["sup_brut"] is not None and prix - niv["sup_brut"] < mm_h1:
-        al.append({"txt": f"⚠️ Support proche ({niv['sup']}) : le prix peut rebondir contre ce plancher.", "cls": "jaune"})
+        al.append({"txt": f"⚠️ Un support est proche ({niv['sup']}). Le prix risque de rebondir contre ce plancher. Attends qu'il le casse franchement, ou réduis ton objectif.", "cls": "jaune"})
 
     if m5["grande"]:
-        al.append({"txt": f"⚠️ Grosse bougie M5 (×{m5['taille_x']}) : le mouvement est déjà fait, attends la prochaine.", "cls": "jaune"})
+        al.append({"txt": f"⚠️ La dernière bougie M5 est anormalement grande (×{m5['taille_x']} la moyenne). Le mouvement a déjà été fait d'un coup : entrer maintenant, c'est souvent acheter le sommet. Attends la prochaine bougie.", "cls": "jaune"})
 
     cote = sltp["achat" if achat else "vente"]
     if cote is None:
-        al.append({"txt": "⚠️ Pas d'objectif clair : le prix est au bord de la fourchette récente.", "cls": "jaune"})
+        al.append({"txt": "⚠️ Pas d'objectif clair devant toi. Le prix est au bord de la fourchette récente : pas de place pour un trade propre. Attends qu'un nouveau range se forme.", "cls": "jaune"})
     elif cote["ok"]:
-        al.append({"txt": f"✅ Ratio gain/risque {cote['ratio']} : correct (au moins 1,5).", "cls": "vert"})
+        al.append({"txt": f"✅ Ratio gain/risque {cote['ratio']} : c'est bon (au moins 1,5). Si tu gagnes ce trade, tu gagneras {cote['ratio']} fois ce que tu risques.", "cls": "vert"})
     else:
-        al.append({"txt": f"⚠️ Ratio gain/risque {cote['ratio']} : sous 1,5, le trade ne vaut pas le coup.", "cls": "jaune"})
+        al.append({"txt": f"⚠️ Ratio gain/risque {cote['ratio']} : c'est sous 1,5. Autrement dit, tu risques plus que ce que tu peux gagner. Ce trade ne vaut pas le coup en l'état.", "cls": "jaune"})
 
     sens = "haussiere" if achat else "baissiere"
     if m15["cassure"]["sens"] == sens:
-        al.append({"txt": "💥 Cassure M15 dans le sens du signal (elle peut être fausse : vérifie que la bougie suivante tient).", "cls": "vert"})
+        al.append({"txt": "💥 Il y a eu une cassure M15 dans le sens de ton signal. Attention : une cassure peut être fausse. Vérifie que la bougie suivante tient avant de te fier à elle.", "cls": "vert"})
 
     pour = "motif_haussier" if achat else "motif_baissier"
     contre = "motif_baissier" if achat else "motif_haussier"
     if m5[pour] or m15[pour]:
-        al.append({"txt": "🕯️ Bougie de rejet ou d'englobement dans le même sens (un indice, pas une preuve).", "cls": "vert"})
+        al.append({"txt": "🕯️ Une bougie de rejet ou d'englobement va dans le sens de ton signal. C'est un indice encourageant, mais ça ne prouve rien : reste sur tes règles.", "cls": "vert"})
     if m5[contre]:
-        al.append({"txt": "⚠️ Bougie M5 de sens contraire (mèche ou englobante) : prudence.", "cls": "jaune"})
+        al.append({"txt": "⚠️ La dernière bougie M5 va dans le sens contraire de ton signal (mèche ou englobante). Prudence : le marché hésite peut-être.", "cls": "jaune"})
 
     if bt and bt["n"] >= 10 and bt["pct"] is not None and bt["pct"] < 45:
-        al.append({"txt": f"⚠️ Sur le passé, ce signal ne va dans le bon sens que {bt['pct']}% des fois sur cette devise.", "cls": "jaune"})
+        al.append({"txt": f"⚠️ Sur le passé testé, ce signal n'allait dans le bon sens que {bt['pct']}% du temps sur cette paire. Ça ne veut pas dire qu'il va échouer maintenant, mais garde-le en tête.", "cls": "jaune"})
     if bt and bt["sim_n"] >= 8 and bt["sim_r"] is not None and bt["sim_r"] < 0:
-        al.append({"txt": f"⚠️ Sur le passé, avec stop et objectif, ce signal perd en moyenne {abs(bt['sim_r'])} R par trade.", "cls": "jaune"})
+        al.append({"txt": f"⚠️ Sur le passé testé, avec stop et objectif, ce signal perdait en moyenne {abs(bt['sim_r'])} R par trade. Sois très sélectif sur cette paire.", "cls": "jaune"})
     return al
 
 
-# ───────────── GUIDE DU TRADE ─────────────
+# ───────────── GUIDE ─────────────
 
 def construire_guide(pair, cond, tfs, sltp, filtres=None):
     sig = cond["signal"]
@@ -983,14 +1020,34 @@ def construire_guide(pair, cond, tfs, sltp, filtres=None):
     prix = tfs["M5"]["prix"]
     raisons = [a["txt"] for a in cond.get("alertes", []) if a["cls"] == "jaune"]
     nxt = (int(time.time() // 300) + 1) * 300
+    timing = cond.get("timing")
+
+    # Détermine la couleur du guide et le niveau de lot
+    feu = "vert" if not raisons else "orange"
+    lot_niveau = "PLEIN"
+    lot_txt = "Lot plein autorisé : tu entres au début du mouvement, le risque est bien placé."
+
+    if timing:
+        if timing["niveau"] == "EN COURS":
+            feu = "orange"
+            lot_niveau = "DEMI"
+            lot_txt = "Demi-lot conseillé : le mouvement est déjà lancé, le potentiel est réduit de moitié. Prends la moitié du lot habituel."
+        elif timing["niveau"] == "TARDIF":
+            feu = "orange"
+            lot_niveau = "ATTENDRE"
+            lot_txt = "N'ENTRE PAS : le mouvement est déjà trop avancé. Attends le prochain croisement EMA M5 pour un vrai point d'entrée."
+
     g = {
         "sens": sig,
-        "feu": "vert" if not raisons else "orange",
+        "feu": feu,
         "raisons": raisons,
         "heure": datetime.fromtimestamp(nxt, BENIN).strftime("%H:%M"),
         "prix": fp(pair, prix),
         "contrat": CONTRAT.get(pair),
         "stop": None,
+        "timing": timing,
+        "lot_niveau": lot_niveau,
+        "lot_txt": lot_txt,
     }
     if cote:
         g.update({
@@ -1004,7 +1061,7 @@ def construire_guide(pair, cond, tfs, sltp, filtres=None):
     return g
 
 
-# ───────────── ANALYSE D'UNE PAIRE ─────────────
+# ───────────── ANALYSE ─────────────
 
 def analyser_paire(pair, source, historique=None, autres_cond=None):
     series, resultats = {}, {}
@@ -1037,7 +1094,6 @@ def analyser_paire(pair, source, historique=None, autres_cond=None):
         bt = backtest(series, pair)
         cond["alertes"] = alertes_signal(cond, resultats, niv, sltp, bt, mouvement_moyen(h1, 24))
 
-        # Filtres de fiabilité
         sens_sig = None
         if cond["signal"] == "ACHAT":
             sens_sig = "haussier"
@@ -1067,13 +1123,11 @@ def analyser_securise(pair, source, historique=None, autres_cond=None):
 def analyser_tout():
     taches = [(p, "yahoo") for p in YAHOO_PAIRS] + [(p, "deriv") for p in DERIV_PAIRS]
 
-    # Passe 1 : analyse brute (sans filtres croisés)
     res = {}
     with ThreadPoolExecutor(max_workers=4) as ex:
         for (pair, _), data in zip(taches, ex.map(lambda t: analyser_securise(*t), taches)):
             res[pair] = data
 
-    # Passe 2 : on recalcule les filtres avec les autres signaux connus
     autres_cond = {p: res[p]["cond"] for p in res}
     historique = session.get("historique", [])
     for pair, source in taches:
@@ -1082,14 +1136,13 @@ def analyser_tout():
         except Exception as e:
             print(f"Erreur passe 2 {pair}: {e}")
 
-    # Mise à jour de l'historique
     maintenant = time.time()
     for pair, d in res.items():
         cond = d["cond"]
         if cond["signal"] in ("ACHAT", "VENTE"):
             historique.append({"pair": pair, "sens": cond["signal"], "t": maintenant,
-                               "prix": d["prix"], "feu": d["guide"]["feu"] if d.get("guide") else "?"})
-    # Garde seulement les 50 derniers
+                               "prix": d["prix"], "feu": d["guide"]["feu"] if d.get("guide") else "?",
+                               "heure": datetime.now(BENIN).strftime("%H:%M")})
     historique = historique[-50:]
     session["historique"] = historique
 
