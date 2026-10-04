@@ -1,4 +1,4 @@
-import os, json, hashlib, secrets, time
+import os, json, hashlib, secrets, time, bisect
 from datetime import datetime, timezone, timedelta
 from concurrent.futures import ThreadPoolExecutor
 from flask import Flask, request, redirect, url_for, session, render_template
@@ -22,8 +22,9 @@ TIMEFRAMES = {
     "H1": ("1h", "60d", 3600),
     "M30": ("30m", "30d", 1800),
     "M15": ("15m", "15d", 900),
-    "M5": ("5m", "5d", 300),
+    "M5": ("5m", "7d", 300),
 }
+DERIV_COUNT = {"H4": 300, "H1": 300, "M30": 300, "M15": 400, "M5": 1000}
 PERIODE = 10
 EMA_COURT = 5
 EMA_LONG = 25
@@ -219,6 +220,60 @@ def calc_divergence(bougies, creux, sommets):
     return "aucune"
 
 
+def mouvement_moyen(bougies, n=24):
+    d = bougies[-n:]
+    if not d:
+        return 0.0
+    return float(np.mean([b["high"] - b["low"] for b in d]))
+
+
+# ───────────── MOTIFS DE BOUGIES / CASSURE ─────────────
+
+def calc_motifs(bougies):
+    """Mèches de rejet, englobante, bougie anormale (dernière bougie fermée)."""
+    b, p = bougies[-1], bougies[-2]
+    rng = b["high"] - b["low"]
+    motifs, mh, mb = [], False, False
+    if rng > 0:
+        corps = abs(b["close"] - b["open"])
+        bas = min(b["open"], b["close"]) - b["low"]
+        haut = b["high"] - max(b["open"], b["close"])
+        if bas / rng >= 0.6 and corps / rng <= 0.3:
+            motifs.append({"txt": "Mèche basse", "cls": "vert"})
+            mh = True
+        if haut / rng >= 0.6 and corps / rng <= 0.3:
+            motifs.append({"txt": "Mèche haute", "cls": "rouge"})
+            mb = True
+    if p["close"] < p["open"] and b["close"] > b["open"] and b["open"] <= p["close"] and b["close"] >= p["open"]:
+        motifs.append({"txt": "Englobante ↑", "cls": "vert"})
+        mh = True
+    if p["close"] > p["open"] and b["close"] < b["open"] and b["open"] >= p["close"] and b["close"] <= p["open"]:
+        motifs.append({"txt": "Englobante ↓", "cls": "rouge"})
+        mb = True
+    recent = bougies[-21:-1]
+    moy = float(np.mean([x["high"] - x["low"] for x in recent])) if recent else 0.0
+    taille_x = round(rng / moy, 1) if moy > 0 else 0.0
+    grande = taille_x >= 2
+    if grande:
+        motifs.append({"txt": f"Grande ×{taille_x}", "cls": "jaune"})
+    return motifs, grande, taille_x, mh, mb
+
+
+def calc_cassure(bougies, n=20):
+    """Cassure du plus haut / plus bas des 20 bougies d'avant (sur les 3 dernières bougies)."""
+    for k in range(0, 3):
+        idx = len(bougies) - 1 - k
+        if idx < n:
+            break
+        prev = bougies[idx - n:idx]
+        c = bougies[idx]["close"]
+        if c > max(x["high"] for x in prev):
+            return {"sens": "haussiere", "il_y_a": k}
+        if c < min(x["low"] for x in prev):
+            return {"sens": "baissiere", "il_y_a": k}
+    return {"sens": "aucune", "il_y_a": None}
+
+
 def analyser(tf, bougies):
     if len(bougies) < 30:
         return None
@@ -230,12 +285,16 @@ def analyser(tf, bougies):
     sommets = trouver_sommets(bougies)
     divergence = calc_divergence(bougies, creux, sommets)
     ema5, ema25, ema_sig, ema_depuis = calc_ema_signal(clotures)
+    motifs, grande, taille_x, mh, mb = calc_motifs(bougies)
     return {
         "tf": tf, "tendance": tendance, "pct_tendance": pct_tendance,
         "pct_acheteurs": pa, "pct_vendeurs": pv,
         "pct_agitation": ag,
         "divergence": divergence,
         "ema5": ema5, "ema25": ema25, "ema_signal": ema_sig, "ema_depuis": ema_depuis,
+        "motifs": motifs, "grande": grande, "taille_x": taille_x,
+        "motif_haussier": mh, "motif_baissier": mb,
+        "cassure": calc_cassure(bougies),
         "prix": clotures[-1]
     }
 
@@ -304,6 +363,179 @@ def calc_stats(pair, h1, tfs):
     }
 
 
+# ───────────── SUPPORTS / RÉSISTANCES ─────────────
+
+def calc_niveaux(pair, prix, m15, h1):
+    res, sup = [], []
+    for bl in (m15, h1):
+        for i in trouver_sommets(bl, 80, 3):
+            res.append(bl[i]["high"])
+        for i in trouver_creux(bl, 80, 3):
+            sup.append(bl[i]["low"])
+    r = min([x for x in res if x > prix], default=None)
+    s = max([x for x in sup if x < prix], default=None)
+    return {
+        "res": fp(pair, r) if r is not None else None,
+        "res_brut": r,
+        "res_pct": round((r - prix) / prix * 100, 3) if r is not None else None,
+        "sup": fp(pair, s) if s is not None else None,
+        "sup_brut": s,
+        "sup_pct": round((prix - s) / prix * 100, 3) if s is not None else None,
+    }
+
+
+# ───────────── STOP LOSS / OBJECTIF ─────────────
+
+def cote_sltp(pair, prix, stop, obj, sens):
+    if stop is None or obj is None:
+        return None
+    if sens == "achat" and not (stop < prix < obj):
+        return None
+    if sens == "vente" and not (obj < prix < stop):
+        return None
+    risque, gain = abs(prix - stop), abs(obj - prix)
+    if risque <= 0:
+        return None
+    ratio = gain / risque
+    return {
+        "stop": fp(pair, stop), "objectif": fp(pair, obj),
+        "risque_pct": round(risque / prix * 100, 3),
+        "gain_pct": round(gain / prix * 100, 3),
+        "ratio": round(ratio, 2), "ok": ratio >= 1.5,
+    }
+
+
+def calc_sltp(pair, prix, m15):
+    tampon = mouvement_moyen(m15, 20) * 0.1
+    creux = [m15[i]["low"] for i in trouver_creux(m15, 80, 3)]
+    sommets = [m15[i]["high"] for i in trouver_sommets(m15, 80, 3)]
+    bas20 = min(b["low"] for b in m15[-20:])
+    haut20 = max(b["high"] for b in m15[-20:])
+    bas50 = min(b["low"] for b in m15[-50:])
+    haut50 = max(b["high"] for b in m15[-50:])
+
+    st = [x for x in creux if x < prix]
+    stop_a = (st[-1] if st else bas20) - tampon
+    tg = [x for x in sommets if x > prix]
+    obj_a = tg[-1] if tg else (haut50 if haut50 > prix else None)
+
+    sh = [x for x in sommets if x > prix]
+    stop_v = (sh[-1] if sh else haut20) + tampon
+    tc = [x for x in creux if x < prix]
+    obj_v = tc[-1] if tc else (bas50 if bas50 < prix else None)
+
+    return {"achat": cote_sltp(pair, prix, stop_a, obj_a, "achat"),
+            "vente": cote_sltp(pair, prix, stop_v, obj_v, "vente")}
+
+
+# ───────────── MEILLEURES HEURES (heure du Bénin) ─────────────
+
+def calc_heures(h1):
+    par = {}
+    for b in h1:
+        hh = datetime.fromtimestamp(b["t"], BENIN).hour
+        par.setdefault(hh, []).append((b["high"] - b["low"]) / b["close"] * 100)
+    moy = {h: float(np.mean(v)) for h, v in par.items() if len(v) >= 3}
+    if len(moy) < 8:
+        return None
+    glob = float(np.mean(list(moy.values())))
+    top = sorted(moy, key=moy.get, reverse=True)[:3]
+    plate = max(moy.values()) / min(moy.values()) < 1.25
+    maintenant = datetime.now(BENIN).hour
+    if maintenant in moy and glob > 0:
+        rel = moy[maintenant] / glob
+        etat = "forte" if rel >= 1.2 else "faible" if rel <= 0.8 else "normale"
+    else:
+        rel, etat = 0.0, "inconnue"
+    return {
+        "top": [f"{h:02d}h–{(h + 1) % 24:02d}h" for h in top],
+        "plate": plate, "now_etat": etat, "now_ratio": round(rel, 2),
+    }
+
+
+# ───────────── TEST SUR LE PASSÉ ─────────────
+
+def tendance_simple(cl):
+    x = np.arange(len(cl))
+    p = np.polyfit(x, np.array(cl), 1)[0]
+    return 1 if p > 0 else -1 if p < 0 else 0
+
+
+def backtest(series, horizon=12, test=1000):
+    """Rejoue le signal complet (H1+M30+M15+M5) sur les bougies passées.
+    Gagné = le prix est allé dans le bon sens 'horizon' bougies M5 plus tard (1 h)."""
+    if any(len(series.get(tf, [])) < 30 for tf in ("H1", "M30", "M15", "M5")):
+        return None
+    m5 = series["M5"]
+    ends = {tf: [b["t"] + g for b in series[tf]] for tf, g in (("H1", 3600), ("M30", 1800), ("M15", 900))}
+    debut = max(40, len(m5) - test)
+    n = {"ACHAT": 0, "VENTE": 0}
+    w = {"ACHAT": 0, "VENTE": 0}
+    prev = None
+    for i in range(debut, len(m5) - horizon):
+        if m5[i + horizon]["t"] - m5[i]["t"] > horizon * 300 * 1.5:
+            prev = None
+            continue
+        t = m5[i]["t"] + 300
+        etats, ok = set(), True
+        for tf in ("H1", "M30", "M15"):
+            k = bisect.bisect_right(ends[tf], t)
+            sl = series[tf][max(0, k - 60):k]
+            if len(sl) < 30:
+                ok = False
+                break
+            tend = tendance_simple([b["close"] for b in sl[-PERIODE:]])
+            d = sl[-PERIODE:]
+            v = sum(1 for b in d if b["close"] > b["open"])
+            r = sum(1 for b in d if b["close"] < b["open"])
+            if tend > 0 and v > r:
+                etats.add(1)
+            elif tend < 0 and r > v:
+                etats.add(-1)
+            else:
+                etats.add(0)
+        if not ok:
+            prev = None
+            continue
+        sig = None
+        if etats == {1} or etats == {-1}:
+            s = next(iter(etats))
+            cl = [b["close"] for b in m5[max(0, i - 100):i + 1]]
+            e5, e25 = calc_ema_serie(cl, EMA_COURT), calc_ema_serie(cl, EMA_LONG)
+            if e5 and e25:
+                if s == 1 and e5[-1] > e25[-1]:
+                    sig = "ACHAT"
+                elif s == -1 and e5[-1] < e25[-1]:
+                    sig = "VENTE"
+        if sig and sig != prev:
+            n[sig] += 1
+            entree, sortie = m5[i]["close"], m5[i + horizon]["close"]
+            if (sig == "ACHAT" and sortie > entree) or (sig == "VENTE" and sortie < entree):
+                w[sig] += 1
+        prev = sig
+
+    total, gagnes = n["ACHAT"] + n["VENTE"], w["ACHAT"] + w["VENTE"]
+    pct = round(gagnes / total * 100, 1) if total else None
+    if total < 8:
+        verdict = "Trop peu de signaux pour conclure : si tu vois moins de 8 signaux, alors le résultat peut être dû au hasard."
+        couleur = ""
+    elif pct >= 55:
+        verdict = "Plutôt fiable sur cette période : si la réussite reste au-dessus de 55 %, alors le signal a un petit avantage."
+        couleur = "vert"
+    elif pct >= 45:
+        verdict = "Proche du hasard (50 %) : si c'est le cas, alors le signal seul ne suffit pas. Regarde le ratio gain/risque."
+        couleur = ""
+    else:
+        verdict = "Peu fiable sur cette période : si le signal perd plus qu'il ne gagne, alors évite-le sur cette devise."
+        couleur = "rouge"
+    heures = round((m5[-1]["t"] - m5[debut]["t"]) / 3600)
+    return {
+        "n": total, "wins": gagnes, "pct": pct, "couleur": couleur, "heures": heures,
+        "achat_n": n["ACHAT"], "achat_w": w["ACHAT"], "vente_n": n["VENTE"], "vente_w": w["VENTE"],
+        "verdict": verdict,
+    }
+
+
 # ───────────── FRAÎCHEUR DES DONNÉES ─────────────
 
 def fraicheur(m5):
@@ -326,7 +558,7 @@ def conditions_paire(tfs, ferme=False):
     manque = [k for k in ["H1", "M30", "M15", "M5"] if k not in tfs]
     if manque:
         return {"signal": "?", "couleur": "jaune", "bonus": False,
-                "conseil": "Données manquantes : " + ", ".join(manque), "details": {}}
+                "conseil": "Données manquantes : " + ", ".join(manque), "details": {}, "alertes": []}
 
     h1, m30, m15, m5 = tfs["H1"], tfs["M30"], tfs["M15"], tfs["M5"]
     h4 = tfs.get("H4")
@@ -373,11 +605,54 @@ def conditions_paire(tfs, ferme=False):
         base = {"signal": "ATTENDRE", "couleur": "jaune", "bonus": False, "conseil": conseil,
                 "details": {**d, f"H4 {fl}": bonus}}
 
+    base["alertes"] = []
     if ferme:
         return {**base, "signal": "FERMÉ", "couleur": "gris", "bonus": False,
                 "conseil": "🌙 Marché fermé : ces chiffres viennent de la dernière séance. N'entre pas. "
                            f"(Dernier verdict : {base['signal']})"}
     return base
+
+
+def alertes_signal(cond, tfs, niv, sltp, bt, mm_h1):
+    """Avertissements ajoutés seulement quand le signal est ACHAT ou VENTE."""
+    sig = cond["signal"]
+    if sig not in ("ACHAT", "VENTE"):
+        return []
+    al = []
+    achat = sig == "ACHAT"
+    m5, m15 = tfs["M5"], tfs["M15"]
+    prix = m5["prix"]
+
+    if achat and niv["res_brut"] is not None and niv["res_brut"] - prix < mm_h1:
+        al.append({"txt": f"⚠️ Résistance proche ({niv['res']}) : le prix peut rebondir contre ce plafond.", "cls": "jaune"})
+    if not achat and niv["sup_brut"] is not None and prix - niv["sup_brut"] < mm_h1:
+        al.append({"txt": f"⚠️ Support proche ({niv['sup']}) : le prix peut rebondir contre ce plancher.", "cls": "jaune"})
+
+    if m5["grande"]:
+        al.append({"txt": f"⚠️ Grosse bougie M5 (×{m5['taille_x']}) : le mouvement est déjà fait, attends la prochaine.", "cls": "jaune"})
+
+    cote = sltp["achat" if achat else "vente"]
+    if cote is None:
+        al.append({"txt": "ℹ️ Pas d'objectif clair : le prix est au bord de la fourchette récente.", "cls": "jaune"})
+    elif cote["ok"]:
+        al.append({"txt": f"✅ Ratio gain/risque {cote['ratio']} : correct (au moins 1,5).", "cls": "vert"})
+    else:
+        al.append({"txt": f"⚠️ Ratio gain/risque {cote['ratio']} : sous 1,5, le trade ne vaut pas le coup.", "cls": "jaune"})
+
+    sens = "haussiere" if achat else "baissiere"
+    if m15["cassure"]["sens"] == sens:
+        al.append({"txt": "💥 Cassure M15 dans le sens du signal : le mouvement est fort.", "cls": "vert"})
+
+    pour = "motif_haussier" if achat else "motif_baissier"
+    contre = "motif_baissier" if achat else "motif_haussier"
+    if m5[pour] or m15[pour]:
+        al.append({"txt": "🕯️ Bougie de rejet ou d'englobement qui confirme le sens.", "cls": "vert"})
+    if m5[contre]:
+        al.append({"txt": "⚠️ Bougie M5 de sens contraire (mèche ou englobante) : prudence.", "cls": "jaune"})
+
+    if bt and bt["n"] >= 10 and bt["pct"] is not None and bt["pct"] < 45:
+        al.append({"txt": f"⚠️ Sur le passé, ce signal ne gagne que {bt['pct']}% des fois sur cette devise.", "cls": "jaune"})
+    return al
 
 
 # ───────────── ANALYSE D'UNE PAIRE ─────────────
@@ -390,7 +665,7 @@ def analyser_paire(pair, source):
             if tf == "H4":
                 brut = regrouper(brut, gran)
         else:
-            brut = recuperer_bougies_deriv(DERIV_PAIRS[pair], gran)
+            brut = recuperer_bougies_deriv(DERIV_PAIRS[pair], gran, DERIV_COUNT[tf])
         bougies = bougies_fermees(brut, gran)
         series[tf] = bougies
         r = analyser(tf, bougies)
@@ -401,7 +676,19 @@ def analyser_paire(pair, source):
     stats = calc_stats(pair, series.get("H1", []), resultats)
     cond = conditions_paire(resultats, fr["etat"] == "ferme")
     prix = fp(pair, resultats["M5"]["prix"]) if "M5" in resultats else "—"
-    return {"tfs": resultats, "stats": stats, "fraicheur": fr, "cond": cond, "prix": prix}
+
+    niv = sltp = bt = heures = None
+    h1, m15 = series.get("H1", []), series.get("M15", [])
+    if "M5" in resultats and len(h1) >= 30 and len(m15) >= 30:
+        p = resultats["M5"]["prix"]
+        niv = calc_niveaux(pair, p, m15, h1)
+        sltp = calc_sltp(pair, p, m15)
+        heures = calc_heures(h1)
+        bt = backtest(series)
+        cond["alertes"] = alertes_signal(cond, resultats, niv, sltp, bt, mouvement_moyen(h1, 24))
+
+    return {"tfs": resultats, "stats": stats, "fraicheur": fr, "cond": cond, "prix": prix,
+            "niv": niv, "sltp": sltp, "bt": bt, "heures": heures}
 
 
 def analyser_securise(pair, source):
@@ -411,7 +698,8 @@ def analyser_securise(pair, source):
         print(f"Erreur {pair}: {e}")
         return {"tfs": {}, "stats": None,
                 "fraicheur": {"texte": "Erreur de chargement", "etat": "ferme"},
-                "cond": conditions_paire({}), "prix": "—"}
+                "cond": conditions_paire({}), "prix": "—",
+                "niv": None, "sltp": None, "bt": None, "heures": None}
 
 
 def analyser_tout():

@@ -4,6 +4,7 @@
 <h1>📊 Multi-TF Analysis</h1>
 <div>
 <span class="time">{{ now }}</span>
+<button id="son" class="son" type="button">🔕 Son</button>
 <span class="countdown">🔄 <span id="countdown">5min 0s</span></span>
 <a href="/logout" class="logout">🚪</a>
 </div>
@@ -24,7 +25,7 @@
 {% set c = d.cond %}
 {% set s = d.stats %}
 {% set tfs = d.tfs %}
-<section id="{{ pair }}" class="paire {% if c.signal == 'ACHAT' %}signal-achat{% elif c.signal == 'VENTE' %}signal-vente{% endif %}">
+<section id="{{ pair }}" data-signal="{{ c.signal }}" class="paire {% if c.signal == 'ACHAT' %}signal-achat{% elif c.signal == 'VENTE' %}signal-vente{% endif %}">
 
 <div class="tete">
 <div>
@@ -42,6 +43,10 @@
 <div class="fraicheur {{ d.fraicheur.etat }}">{{ d.fraicheur.texte }}</div>
 
 <div class="conseil {{ c.couleur }}">{{ c.conseil }}</div>
+
+{% for a in c.alertes %}
+<div class="alerte {{ a.cls }}">{{ a.txt }}</div>
+{% endfor %}
 
 <div class="conditions-row">
 {% for k, v in c.details.items() %}
@@ -67,10 +72,65 @@
 </div>
 {% endif %}
 
+{% if d.sltp %}
+<h3>🎯 Stop & objectif (si tu entres maintenant)</h3>
+<div class="duo">
+{% for nom, cote in [('ACHAT', d.sltp.achat), ('VENTE', d.sltp.vente)] %}
+<div class="bloc {{ 'actif' if c.signal == nom }}">
+<b class="{{ 'vert' if nom == 'ACHAT' else 'rouge' }}">{{ nom }}</b>
+{% if cote %}
+<div>Stop : <b>{{ cote.stop }}</b> <span class="pct">(risque {{ cote.risque_pct }}%)</span></div>
+<div>Objectif : <b>{{ cote.objectif }}</b> <span class="pct">(gain {{ cote.gain_pct }}%)</span></div>
+<div>Ratio gain/risque : <b class="{{ 'vert' if cote.ok else 'rouge' }}">{{ cote.ratio }}</b></div>
+{% else %}
+<div class="pct">Pas d'objectif clair pour le moment.</div>
+{% endif %}
+</div>
+{% endfor %}
+</div>
+{% endif %}
+
+{% if d.niv %}
+<h3>🧱 Niveaux & contexte</h3>
+<div class="stats">
+<div class="tile"><small>Résistance proche (plafond)</small><b>{{ d.niv.res or '—' }}</b>{% if d.niv.res_pct is not none %} <em class="etat">+{{ d.niv.res_pct }}%</em>{% endif %}</div>
+<div class="tile"><small>Support proche (plancher)</small><b>{{ d.niv.sup or '—' }}</b>{% if d.niv.sup_pct is not none %} <em class="etat">−{{ d.niv.sup_pct }}%</em>{% endif %}</div>
+{% for nom in ['M15', 'H1'] %}
+{% if nom in tfs %}
+{% set cs = tfs[nom].cassure %}
+<div class="tile"><small>Cassure {{ nom }} (20 bougies)</small>
+{% if cs.sens == 'haussiere' %}<b class="vert">↑ haussière</b>{% elif cs.sens == 'baissiere' %}<b class="rouge">↓ baissière</b>{% else %}<b>aucune</b>{% endif %}
+{% if cs.il_y_a is not none %} <em class="etat">{{ 'maintenant' if cs.il_y_a == 0 else 'il y a ' ~ cs.il_y_a ~ ' bg' }}</em>{% endif %}
+</div>
+{% endif %}
+{% endfor %}
+{% if d.heures %}
+<div class="tile wide"><small>🕐 Heures les plus actives (heure du Bénin)</small>
+{% if d.heures.plate %}<b class="mini">Activité identique à toutes les heures</b>{% else %}<b class="mini">{{ d.heures.top|join(' · ') }}</b>{% endif %}
+<div class="sous">Maintenant : activité {{ d.heures.now_etat }}{% if d.heures.now_etat != 'inconnue' %} (×{{ d.heures.now_ratio }}){% endif %}</div>
+</div>
+{% endif %}
+</div>
+{% endif %}
+
+<h3>🧪 Test sur le passé</h3>
+{% if d.bt %}
+{% set b = d.bt %}
+<div class="stats">
+<div class="tile"><small>Signaux trouvés</small><b>{{ b.n }}</b> <em class="etat">sur ≈ {{ b.heures }} h</em></div>
+<div class="tile"><small>Réussite après 1 h</small><b class="{{ b.couleur }}">{% if b.pct is not none %}{{ b.pct }}%{% else %}—{% endif %}</b></div>
+<div class="tile"><small>ACHAT gagnés</small><b>{{ b.achat_w }}/{{ b.achat_n }}</b></div>
+<div class="tile"><small>VENTE gagnés</small><b>{{ b.vente_w }}/{{ b.vente_n }}</b></div>
+</div>
+<div class="note">{{ b.verdict }}<br>Gagné = le prix est allé dans le bon sens 1 h après le signal, sans stop loss.</div>
+{% else %}
+<div class="note">Pas assez de données pour tester le signal sur le passé.</div>
+{% endif %}
+
 <h3>⏱️ Analyse par timeframe</h3>
 <div class="scroll">
 <table>
-<thead><tr><th>TF</th><th>Tendance</th><th>Ach. / Ven.</th><th>Agit.</th><th>Div.</th><th>EMA5</th><th>EMA25</th><th>Signal EMA</th></tr></thead>
+<thead><tr><th>TF</th><th>Tendance</th><th>Ach. / Ven.</th><th>Agit.</th><th>Div.</th><th>EMA5</th><th>EMA25</th><th>Signal EMA</th><th>Cassure</th><th>Bougie</th></tr></thead>
 <tbody>
 {% for tf in ["H4", "H1", "M30", "M15", "M5"] %}
 {% if tf in tfs %}
@@ -84,6 +144,8 @@
 <td>{{ t.ema5 or '—' }}</td>
 <td>{{ t.ema25 or '—' }}</td>
 <td class="{% if t.ema_signal == 'haussier' %}vert{% elif t.ema_signal == 'baissier' %}rouge{% endif %}"><b>{{ t.ema_signal or '—' }}</b> <span class="pct">{{ t.ema_depuis }} bg</span></td>
+<td>{% if t.cassure.sens == 'haussiere' %}<span class="vert">↑</span>{% elif t.cassure.sens == 'baissiere' %}<span class="rouge">↓</span>{% else %}—{% endif %}{% if t.cassure.il_y_a is not none %} <span class="pct">{{ 'now' if t.cassure.il_y_a == 0 else t.cassure.il_y_a ~ ' bg' }}</span>{% endif %}</td>
+<td>{% for m in t.motifs %}<span class="tag {{ m.cls }}">{{ m.txt }}</span> {% else %}—{% endfor %}</td>
 </tr>
 {% endif %}
 {% endfor %}
@@ -99,20 +161,104 @@
 <li>Ach. / Ven. = % de bougies vertes / rouges sur les 10 dernières.</li>
 <li>Agit. = part du mouvement perdue en allers-retours. Si c'est haut, alors le marché est indécis.</li>
 <li>Div. : H = divergence haussière, B = divergence baissière, — = aucune.</li>
-<li>« N bg » = nombre de bougies depuis le croisement EMA5 / EMA25. Si N est grand, alors l'entrée est tardive.</li>
+<li>« N bg » = nombre de bougies depuis le croisement EMA5 / EMA25 ou depuis la cassure. Si N est grand, alors l'entrée est tardive.</li>
+<li>Cassure : le prix a fermé au-dessus du plus haut (↑) ou sous le plus bas (↓) des 20 bougies d'avant.</li>
+<li>Mèche basse : les vendeurs ont essayé de pousser et ont échoué (signe d'achat). Mèche haute : l'inverse.</li>
+<li>Englobante : la dernière bougie avale entièrement la précédente (possible retournement).</li>
+<li>Grande ×N : la bougie est N fois plus grande que la moyenne. Si N ≥ 2, alors attends.</li>
+<li>Stop : sous le dernier creux (achat) ou au-dessus du dernier sommet (vente). Si le ratio est sous 1,5, alors le trade ne vaut pas le coup.</li>
+<li>Test sur le passé : c'est une indication, pas une garantie. Si le nombre de signaux est petit, alors le résultat n'est pas sûr.</li>
+<li>🔔 Son : si tu l'actives, alors un bip et une vibration t'avertissent d'un nouveau signal tant que la page reste ouverte. Si l'écran du téléphone est verrouillé, alors rien ne sonne.</li>
 <li>Toutes les bougies en cours sont ignorées : seules les bougies clôturées comptent.</li>
 </ul>
 </details>
 
 </main>
 <script>
-setTimeout(() => { location.reload(); }, 5*60*1000);
-let sec = 300;
-const timer = setInterval(() => {
+var sec = 300;
+var audioCtx = null;
+var sonOn = false;
+try { sonOn = localStorage.getItem('son') === '1'; } catch (e) {}
+
+function majBouton() {
+  var b = document.getElementById('son');
+  if (b) b.textContent = sonOn ? '🔔 Son activé' : '🔕 Son';
+}
+
+function bip() {
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    [0, 0.25, 0.5].forEach(function (d) {
+      var o = audioCtx.createOscillator();
+      var g = audioCtx.createGain();
+      o.frequency.value = 880;
+      g.gain.value = 0.2;
+      o.connect(g);
+      g.connect(audioCtx.destination);
+      o.start(audioCtx.currentTime + d);
+      o.stop(audioCtx.currentTime + d + 0.15);
+    });
+    if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
+  } catch (e) {}
+}
+
+function lireSignaux() {
+  var o = {};
+  document.querySelectorAll('section.paire').forEach(function (s) { o[s.id] = s.dataset.signal; });
+  return o;
+}
+
+function estSignal(x) { return x === 'ACHAT' || x === 'VENTE'; }
+
+document.getElementById('son').addEventListener('click', function () {
+  sonOn = !sonOn;
+  try { localStorage.setItem('son', sonOn ? '1' : '0'); } catch (e) {}
+  majBouton();
+  if (sonOn) bip();
+});
+majBouton();
+
+var precedent = lireSignaux();
+if (sonOn && Object.keys(precedent).some(function (k) { return estSignal(precedent[k]); })) bip();
+
+var enCours = false;
+async function rafraichir() {
+  if (enCours) return;
+  enCours = true;
+  try {
+    var r = await fetch('/dashboard', { credentials: 'same-origin' });
+    var t = await r.text();
+    var doc = new DOMParser().parseFromString(t, 'text/html');
+    var nm = doc.querySelector('main');
+    if (!nm) { location.reload(); return; }
+    document.querySelector('main').innerHTML = nm.innerHTML;
+    var tm = doc.querySelector('.time');
+    if (tm) document.querySelector('.time').textContent = tm.textContent;
+    var nouveau = lireSignaux();
+    var alertes = [];
+    Object.keys(nouveau).forEach(function (k) {
+      if (estSignal(nouveau[k]) && precedent[k] !== nouveau[k]) alertes.push(nouveau[k] + ' ' + k);
+    });
+    precedent = nouveau;
+    if (alertes.length) {
+      if (sonOn) bip();
+      document.title = '🔔 ' + alertes.join(', ');
+    } else {
+      document.title = 'Multi-TF';
+    }
+    sec = 300;
+  } catch (e) {
+    sec = 60;
+  }
+  enCours = false;
+}
+
+setInterval(function () {
   sec--;
-  const el = document.getElementById('countdown');
-  if (el) el.textContent = Math.floor(sec/60) + 'min ' + (sec%60) + 's';
-  if (sec <= 0) clearInterval(timer);
+  var el = document.getElementById('countdown');
+  if (el) el.textContent = Math.floor(sec / 60) + 'min ' + (sec % 60) + 's';
+  if (sec <= 0) { sec = 300; rafraichir(); }
 }, 1000);
 </script>
 </body></html>

@@ -12,6 +12,7 @@ header{display:flex;justify-content:space-between;align-items:center;padding:.8r
 header h1{font-size:1rem}
 .time{color:var(--muted);font-size:.85rem;margin-right:.5rem}
 .countdown{background:rgba(0,212,255,.1);padding:.3rem .7rem;border-radius:50px;font-size:.75rem;color:var(--cyan);margin-right:.5rem}
+.son{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);color:#fff;padding:.3rem .7rem;border-radius:50px;font-size:.75rem;cursor:pointer;margin-right:.5rem}
 .logout{color:var(--red);text-decoration:none}
 main{max-width:1200px;margin:0 auto}
 
@@ -47,39 +48,55 @@ section h2{color:var(--cyan);font-size:1.1rem}
 .fraicheur.warn{color:var(--yellow)}
 .fraicheur.ferme{color:#9aa0b4}
 
-.conseil{padding:.6rem .9rem;border-radius:8px;font-size:.85rem;margin-bottom:.8rem;line-height:1.5}
+.conseil{padding:.6rem .9rem;border-radius:8px;font-size:.85rem;margin-bottom:.6rem;line-height:1.5}
 .conseil.vert{background:rgba(40,200,64,.1);border-left:3px solid var(--green);color:#a0e8a8}
 .conseil.rouge{background:rgba(255,95,87,.1);border-left:3px solid var(--red);color:#ffb0aa}
 .conseil.jaune{background:rgba(255,189,46,.08);border-left:3px solid var(--yellow);color:#f0d590}
 .conseil.gris{background:rgba(255,255,255,.04);border-left:3px solid #6b7088;color:#b8bdd0}
 
-.conditions-row{display:flex;flex-wrap:wrap;gap:.3rem;margin-bottom:.9rem}
+.alerte{padding:.4rem .8rem;border-radius:8px;font-size:.78rem;margin-bottom:.4rem;line-height:1.4}
+.alerte.vert{background:rgba(40,200,64,.08);color:#a0e8a8}
+.alerte.jaune{background:rgba(255,189,46,.08);color:#f0d590}
+
+.conditions-row{display:flex;flex-wrap:wrap;gap:.3rem;margin:.4rem 0 .9rem}
 .cond{font-size:.7rem;padding:.3rem .6rem;border-radius:50px;background:rgba(255,255,255,.03)}
 .cond.ok{background:rgba(40,200,64,.1);color:var(--green)}
 .cond.ko{background:rgba(255,95,87,.1);color:var(--red)}
 
-h3{font-size:.8rem;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin:.4rem 0 .5rem}
+h3{font-size:.8rem;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin:.6rem 0 .5rem}
 
 .stats{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:.5rem;margin-bottom:1rem}
 .tile{background:var(--card2);border-radius:10px;padding:.6rem .7rem}
+.tile.wide{grid-column:span 2}
 .tile small{display:block;color:var(--muted);font-size:.62rem;text-transform:uppercase;letter-spacing:.04em;margin-bottom:.25rem}
 .tile b{font-size:.95rem}
 .tile b.mini{font-size:.72rem;font-weight:600}
 .tile .etat{font-style:normal;font-size:.7rem;color:var(--cyan)}
+.tile .sous{font-size:.7rem;color:var(--muted);margin-top:.3rem}
 .jauge{height:6px;border-radius:4px;background:linear-gradient(90deg,rgba(255,95,87,.5),rgba(255,189,46,.4),rgba(40,200,64,.5));position:relative;margin-top:.5rem}
 .jauge i{position:absolute;top:-3px;width:4px;height:12px;border-radius:2px;background:#fff;transform:translateX(-50%)}
 
+.duo{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:.5rem;margin-bottom:1rem}
+.bloc{background:var(--card2);border-radius:10px;padding:.7rem .8rem;font-size:.82rem;line-height:1.7;border:2px solid transparent}
+.bloc.actif{border-color:var(--cyan)}
+.note{font-size:.78rem;color:var(--muted);line-height:1.5;margin:-.3rem 0 1rem}
+
 .scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
-table{width:100%;min-width:560px;border-collapse:collapse;font-size:.85rem}
+table{width:100%;min-width:780px;border-collapse:collapse;font-size:.85rem}
 th{color:var(--cyan);text-align:left;padding:.4rem;border-bottom:2px solid rgba(0,212,255,.3);font-size:.68rem;text-transform:uppercase;white-space:nowrap}
 td{padding:.4rem;border-bottom:1px solid rgba(255,255,255,.05);white-space:nowrap}
 .pct{color:var(--muted);font-size:.75rem}
 .vert{color:var(--green)}
 .rouge{color:var(--red)}
+.jaune{color:var(--yellow)}
 .duelcell{min-width:90px}
 .duelcell small{font-size:.7rem}
 .duel{height:6px;background:var(--red);border-radius:4px;overflow:hidden;margin-bottom:.2rem}
 .duel i{display:block;height:100%;background:var(--green)}
+.tag{display:inline-block;font-size:.66rem;padding:.15rem .45rem;border-radius:50px;background:rgba(255,255,255,.06)}
+.tag.vert{background:rgba(40,200,64,.15)}
+.tag.rouge{background:rgba(255,95,87,.15)}
+.tag.jaune{background:rgba(255,189,46,.15)}
 
 @keyframes blinkGreen{0%,100%{opacity:1}50%{opacity:.5}}
 @keyframes blinkRed{0%,100%{opacity:1}50%{opacity:.5}}
