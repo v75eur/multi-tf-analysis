@@ -2,22 +2,55 @@
 <body>
 <header><h1>📊 Multi-TF Analysis</h1><div><span class="time">{{ now }}</span> <a href="/logout" class="logout">🚪</a></div></header>
 <main>
+
+<section class="intro">
+<h2>📖 Comment lire ce dashboard</h2>
+<p>Ce dashboard analyse <b>4 paires</b> sur <b>4 timeframes</b> chacune. Pour chaque paire, tu vois :</p>
+<ul>
+<li><b>Tendance</b> : direction générale (régression linéaire sur 10 clôtures)</li>
+<li><b>Acheteurs</b> : % de bougies vertes (close > open) sur 10</li>
+<li><b>Vendeurs</b> : % de bougies rouges (close < open) sur 10</li>
+<li><b>Agitation</b> : % de chevauchements entre bougies (mesure le bruit)</li>
+<li><b>Divergence</b> : creux/sommets + force relative (vraie divergence)</li>
+</ul>
+<p class="conseil">💡 <b>Conseil :</b> utilise ces informations comme <b>indicateurs</b>, pas comme certitudes. Un signal n'est pas une garantie.</p>
+</section>
+
 {% for pair, tfs in resultats.items() %}
 {% set s = stats[pair] %}
 <section class="paire">
 <h2>💱 {{ pair }} {% if s %}<span class="conclusion {{ s.couleur }}">{{ s.conclusion }}</span>{% endif %}</h2>
+
 {% if s %}
 <div class="stats-box">
-<div class="stat-item"><span class="lbl">Tendance</span><b>{{ s.moy_tendance }}%</b></div>
-<div class="stat-item"><span class="lbl">Acheteurs</span><b class="vert">{{ s.moy_acheteurs }}%</b></div>
-<div class="stat-item"><span class="lbl">Vendeurs</span><b class="rouge">{{ s.moy_vendeurs }}%</b></div>
-<div class="stat-item"><span class="lbl">Agitation</span><b>{{ s.moy_agitation }}%</b></div>
-<div class="stat-item"><span class="lbl">Div. H</span><b>{{ s.div_haussiere }}</b></div>
-<div class="stat-item"><span class="lbl">Div. B</span><b>{{ s.div_baissiere }}</b></div>
-<div class="stat-item large"><span class="lbl">Etat</span><b>{{ s.etat }}</b></div>
-<div class="stat-item large"><span class="lbl">Decision</span><b class="decision {{ s.couleur }}">{{ s.decision }}</b></div>
+<div class="stat-item"><span class="lbl">Tendance</span><b>{{ s.moy_tendance }}%</b><small>Force moyenne</small></div>
+<div class="stat-item"><span class="lbl">Acheteurs</span><b class="vert">{{ s.moy_acheteurs }}%</b><small>Moy. 4 TF</small></div>
+<div class="stat-item"><span class="lbl">Vendeurs</span><b class="rouge">{{ s.moy_vendeurs }}%</b><small>Moy. 4 TF</small></div>
+<div class="stat-item"><span class="lbl">Agitation</span><b>{{ s.moy_agitation }}%</b><small>Bruit moyen</small></div>
+<div class="stat-item"><span class="lbl">Div. H</span><b>{{ s.div_haussiere }}</b><small>Haussières</small></div>
+<div class="stat-item"><span class="lbl">Div. B</span><b>{{ s.div_baissiere }}</b><small>Baissières</small></div>
+<div class="stat-item large"><span class="lbl">État du marché</span><b>{{ s.etat }}</b><small>Propre / Normal / Agité</small></div>
+<div class="stat-item large"><span class="lbl">Décision globale</span><b class="decision {{ s.couleur }}">{{ s.decision }}</b><small>Basée sur tendance + agitation</small></div>
+</div>
+
+<div class="explication">
+<h3>📌 À quoi ça sert ?</h3>
+<p><b>Tendance ({{ s.moy_tendance }}%)</b> : direction générale de la paire. Plus le % est élevé, plus la tendance est forte.</p>
+<p><b>Acheteurs / Vendeurs ({{ s.moy_acheteurs }}% / {{ s.moy_vendeurs }}%)</b> : qui domine le marché ? > 50% = domination.</p>
+<p><b>Agitation ({{ s.moy_agitation }}%)</b> : < 40% = marché propre (bon pour trader). 40-70% = normal. > 70% = marché agité (évite).</p>
+<p><b>Divergences (H:{{ s.div_haussiere }} / B:{{ s.div_baissiere }})</b> : détecte les retournements. Une divergence = alerte, pas un signal.</p>
+<p class="conseil">💡 <b>Conseil :</b> 
+{% if s.decision == "ACHAT possible" %}
+Tendance haussière + marché propre → <b>ACHAT possible</b>. Attends une confirmation M5.
+{% elif s.decision == "VENTE possible" %}
+Tendance baissière + marché propre → <b>VENTE possible</b>. Attends une confirmation M5.
+{% else %}
+Marché incertain → <b>ATTENDRE</b>. Ne force pas un trade.
+{% endif %}
+</p>
 </div>
 {% endif %}
+
 <table>
 <thead><tr><th>TF</th><th>Tendance</th><th>Ach.</th><th>Ven.</th><th>Agit.</th><th>Div.</th></tr></thead>
 <tbody>
@@ -33,7 +66,23 @@
 {% endfor %}
 </tbody>
 </table>
+
+<div class="explication-table">
+<h3>📊 Détail par timeframe</h3>
+<p><b>H1</b> (1 heure) : tendance de fond. La plus fiable.</p>
+<p><b>M30</b> (30 min) : intermédiaire. Bon compromis.</p>
+<p><b>M15</b> (15 min) : court terme. Plus de bruit.</p>
+<p><b>M5</b> (5 min) : très court terme. Le plus agité.</p>
+<p class="conseil">💡 <b>Conseil :</b> si les 4 TF sont alignés → signal fort. Si 2/4 → signal moyen. Si 0/4 → pas de signal.</p>
+</div>
 </section>
 {% endfor %}
+
+<section class="intro">
+<h2>⚠️ Avertissement</h2>
+<p>Ce dashboard est un <b>outil d'aide à la décision</b>. Il ne remplace pas l'analyse humaine. <b>Ne trade jamais uniquement sur ces signaux.</b></p>
+<p class="conseil">💡 <b>Conseil final :</b> la patience est la clé. Si un signal n'est pas clair, attends le prochain. Un bon trade vaut mieux que 10 mauvais.</p>
+</section>
+
 </main>
 </body></html>
