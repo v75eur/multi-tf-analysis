@@ -15,6 +15,8 @@ TIMEFRAMES = {"H1": ("1h", "60d", 3600), "M30": ("30m", "30d", 1800), "M15": ("1
 PERIODE = 10
 LARGEUR_PIVOT = 3
 FENETRE_CREUX = 50
+SMA_COURT = 5
+SMA_LONG = 25
 DERIV_WS = "wss://api.derivws.com/trading/v1/options/ws/public"
 
 _cache_yahoo = {}
@@ -57,6 +59,18 @@ def recuperer_bougies_yahoo(symbol, interval, range_):
     except Exception as e:
         print(f"Yahoo {symbol}: {e}")
         return []
+
+def calc_sma(clotures, periode):
+    if len(clotures) < periode: return None
+    return round(np.mean(clotures[-periode:]), 5)
+
+def calc_sma_signal(clotures):
+    sma5 = calc_sma(clotures, SMA_COURT)
+    sma25 = calc_sma(clotures, SMA_LONG)
+    if sma5 is None or sma25 is None: return None
+    if sma5 > sma25: return "haussier"
+    if sma5 < sma25: return "baissier"
+    return "neutre"
 
 def calc_tendance(clotures):
     x = np.arange(1, len(clotures)+1)
@@ -117,7 +131,7 @@ def calc_divergence(bougies, creux, sommets):
     return "aucune"
 
 def analyser(tf, bougies):
-    if len(bougies) < PERIODE: return None
+    if len(bougies) < 25: return None
     clotures = [b["close"] for b in bougies[-PERIODE:]]
     tendance, pct_tendance = calc_tendance(clotures)
     v, r, pa, pv = calc_acheteurs(bougies)
@@ -125,10 +139,21 @@ def analyser(tf, bougies):
     creux = trouver_creux(bougies)
     sommets = trouver_sommets(bougies)
     divergence = calc_divergence(bougies, creux, sommets)
-    return {"tf": tf, "tendance": tendance, "pct_tendance": pct_tendance,
-            "vertes": v, "rouges": r, "pct_acheteurs": pa, "pct_vendeurs": pv,
-            "chevauchements": c, "pct_agitation": ag, "divergence": divergence,
-            "prix": clotures[-1]}
+    all_clotures = [b["close"] for b in bougies]
+    sma5 = calc_sma(all_clotures, SMA_COURT)
+    sma25 = calc_sma(all_clotures, SMA_LONG)
+    sma_signal = calc_sma_signal(all_clotures)
+    dernieres = bougies[-PERIODE:]
+    ohlc = [{"o": round(b["open"],5), "h": round(b["high"],5), "l": round(b["low"],5), "c": round(b["close"],5)} for b in dernieres]
+    return {
+        "tf": tf, "tendance": tendance, "pct_tendance": pct_tendance,
+        "vertes": v, "rouges": r, "pct_acheteurs": pa, "pct_vendeurs": pv,
+        "chevauchements": c, "pct_agitation": ag,
+        "divergence": divergence,
+        "sma5": sma5, "sma25": sma25, "sma_signal": sma_signal,
+        "ohlc": ohlc,
+        "prix": clotures[-1]
+    }
 
 def analyser_paire(pair, source):
     resultats = []
@@ -152,21 +177,30 @@ def stats_paire(resultats):
     moy_tend = round(sum(r["pct_tendance"] for r in resultats) / n, 1)
     div_h = sum(1 for r in resultats if r["divergence"] == "haussiere")
     div_b = sum(1 for r in resultats if r["divergence"] == "baissiere")
-    if pct_h > 60: conclusion, couleur = "HAUSSIER", "vert"
-    elif pct_b > 60: conclusion, couleur = "BAISSIER", "rouge"
+    sma_h = sum(1 for r in resultats if r["sma_signal"] == "haussier")
+    sma_b = sum(1 for r in resultats if r["sma_signal"] == "baissier")
+
+    if pct_h > 60 and sma_h >= 3: conclusion, couleur = "HAUSSIER", "vert"
+    elif pct_b > 60 and sma_b >= 3: conclusion, couleur = "BAISSIER", "rouge"
     else: conclusion, couleur = "NEUTRE", "jaune"
+
     if moy_agit < 40: etat = "Propre"
     elif moy_agit < 70: etat = "Normal"
     else: etat = "Agite"
-    if pct_h > 60 and moy_agit < 70: decision = "ACHAT possible"
-    elif pct_b > 60 and moy_agit < 70: decision = "VENTE possible"
+
+    if pct_h > 60 and moy_agit < 70 and sma_h >= 3: decision = "ACHAT possible"
+    elif pct_b > 60 and moy_agit < 70 and sma_b >= 3: decision = "VENTE possible"
     else: decision = "ATTENDRE"
-    return {"pct_haussier": round(pct_h, 0), "pct_baissier": round(pct_b, 0),
-            "moy_acheteurs": moy_ach, "moy_vendeurs": moy_ven,
-            "moy_agitation": moy_agit, "moy_tendance": moy_tend,
-            "div_haussiere": div_h, "div_baissiere": div_b,
-            "conclusion": conclusion, "couleur": couleur,
-            "etat": etat, "decision": decision, "n_tf": n}
+
+    return {
+        "pct_haussier": round(pct_h, 0), "pct_baissier": round(pct_b, 0),
+        "moy_acheteurs": moy_ach, "moy_vendeurs": moy_ven,
+        "moy_agitation": moy_agit, "moy_tendance": moy_tend,
+        "div_haussiere": div_h, "div_baissiere": div_b,
+        "sma_haussier": sma_h, "sma_baissier": sma_b,
+        "conclusion": conclusion, "couleur": couleur,
+        "etat": etat, "decision": decision, "n_tf": n
+    }
 
 def analyser_tout():
     res, stats = {}, {}

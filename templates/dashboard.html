@@ -12,15 +12,16 @@
 
 <section class="intro">
 <h2>📖 Comment lire ce dashboard</h2>
-<p>Ce dashboard analyse <b>4 paires</b> sur <b>4 timeframes</b> chacune. Pour chaque paire, tu vois :</p>
+<p>Ce dashboard analyse <b>4 paires</b> sur <b>4 timeframes</b> chacune. Pour chaque paire :</p>
 <ul>
-<li><b>Tendance</b> : direction générale (régression linéaire sur 10 clôtures)</li>
-<li><b>Acheteurs</b> : % de bougies vertes (close > open) sur 10</li>
-<li><b>Vendeurs</b> : % de bougies rouges (close < open) sur 10</li>
-<li><b>Agitation</b> : % de chevauchements entre bougies (mesure le bruit)</li>
-<li><b>Divergence</b> : creux/sommets + force relative (vraie divergence)</li>
+<li><b>Tendance</b> : direction (régression linéaire sur 10 clôtures)</li>
+<li><b>Acheteurs/Vendeurs</b> : % de bougies vertes/rouges (close > open ou < open) sur 10</li>
+<li><b>Agitation</b> : % de chevauchements (mesure le bruit)</li>
+<li><b>Divergence</b> : creux/sommets + force relative</li>
+<li><b>SMA 5 / SMA 25</b> : moyennes mobiles simples (croisement = signal)</li>
+<li><b>OHLC</b> : Open, High, Low, Close des 10 dernières bougies</li>
 </ul>
-<p class="conseil">💡 <b>Conseil :</b> utilise ces informations comme <b>indicateurs</b>, pas comme certitudes. Un signal n'est pas une garantie.</p>
+<p class="conseil">💡 <b>Conseil :</b> utilise ces informations comme <b>indicateurs</b>, pas comme certitudes.</p>
 </section>
 
 {% for pair, tfs in resultats.items() %}
@@ -30,36 +31,35 @@
 
 {% if s %}
 <div class="stats-box">
-<div class="stat-item"><span class="lbl">Tendance</span><b>{{ s.moy_tendance }}%</b><small>Force moyenne</small></div>
-<div class="stat-item"><span class="lbl">Acheteurs</span><b class="vert">{{ s.moy_acheteurs }}%</b><small>Moy. 4 TF</small></div>
-<div class="stat-item"><span class="lbl">Vendeurs</span><b class="rouge">{{ s.moy_vendeurs }}%</b><small>Moy. 4 TF</small></div>
-<div class="stat-item"><span class="lbl">Agitation</span><b>{{ s.moy_agitation }}%</b><small>Bruit moyen</small></div>
-<div class="stat-item"><span class="lbl">Div. H</span><b>{{ s.div_haussiere }}</b><small>Haussières</small></div>
-<div class="stat-item"><span class="lbl">Div. B</span><b>{{ s.div_baissiere }}</b><small>Baissières</small></div>
-<div class="stat-item large"><span class="lbl">État du marché</span><b>{{ s.etat }}</b><small>Propre / Normal / Agité</small></div>
-<div class="stat-item large"><span class="lbl">Décision globale</span><b class="decision {{ s.couleur }}">{{ s.decision }}</b><small>Basée sur tendance + agitation</small></div>
+<div class="stat-item"><span class="lbl">Tendance</span><b>{{ s.moy_tendance }}%</b><small>Force moy.</small></div>
+<div class="stat-item"><span class="lbl">Acheteurs</span><b class="vert">{{ s.moy_acheteurs }}%</b><small>Moy.</small></div>
+<div class="stat-item"><span class="lbl">Vendeurs</span><b class="rouge">{{ s.moy_vendeurs }}%</b><small>Moy.</small></div>
+<div class="stat-item"><span class="lbl">Agitation</span><b>{{ s.moy_agitation }}%</b><small>Bruit</small></div>
+<div class="stat-item"><span class="lbl">Div. H</span><b>{{ s.div_haussiere }}</b><small>Hauss.</small></div>
+<div class="stat-item"><span class="lbl">Div. B</span><b>{{ s.div_baissiere }}</b><small>Baiss.</small></div>
+<div class="stat-item"><span class="lbl">SMA H</span><b class="vert">{{ s.sma_haussier }}</b><small>/4 TF</small></div>
+<div class="stat-item"><span class="lbl">SMA B</span><b class="rouge">{{ s.sma_baissier }}</b><small>/4 TF</small></div>
+<div class="stat-item large"><span class="lbl">État</span><b>{{ s.etat }}</b><small>Propre / Normal / Agité</small></div>
+<div class="stat-item large"><span class="lbl">Décision</span><b class="decision {{ s.couleur }}">{{ s.decision }}</b><small>Tendance + agitation + SMA</small></div>
 </div>
 
 <div class="explication">
 <h3>📌 À quoi ça sert ?</h3>
-<p><b>Tendance ({{ s.moy_tendance }}%)</b> : direction générale de la paire. Plus le % est élevé, plus la tendance est forte.</p>
-<p><b>Acheteurs / Vendeurs ({{ s.moy_acheteurs }}% / {{ s.moy_vendeurs }}%)</b> : qui domine le marché ? > 50% = domination.</p>
-<p><b>Agitation ({{ s.moy_agitation }}%)</b> : < 40% = marché propre (bon pour trader). 40-70% = normal. > 70% = marché agité (évite).</p>
-<p><b>Divergences (H:{{ s.div_haussiere }} / B:{{ s.div_baissiere }})</b> : détecte les retournements. Une divergence = alerte, pas un signal.</p>
+<p><b>Tendance ({{ s.moy_tendance }}%)</b> : direction. Plus le % est élevé, plus la tendance est forte.</p>
+<p><b>Acheteurs/Vendeurs</b> : qui domine ? > 50% = domination.</p>
+<p><b>Agitation ({{ s.moy_agitation }}%)</b> : < 40% propre. 40-70% normal. > 70% agité.</p>
+<p><b>Divergences</b> : détecte les retournements. Alerte, pas signal.</p>
+<p><b>SMA 5 / SMA 25</b> : si SMA5 > SMA25 → tendance haussière. Si SMA5 < SMA25 → baissière.</p>
 <p class="conseil">💡 <b>Conseil :</b> 
-{% if s.decision == "ACHAT possible" %}
-Tendance haussière + marché propre → <b>ACHAT possible</b>. Attends une confirmation M5.
-{% elif s.decision == "VENTE possible" %}
-Tendance baissière + marché propre → <b>VENTE possible</b>. Attends une confirmation M5.
-{% else %}
-Marché incertain → <b>ATTENDRE</b>. Ne force pas un trade.
-{% endif %}
+{% if s.decision == "ACHAT possible" %}Tendance haussière + marché propre + SMA haussier → <b>ACHAT possible</b>. Attends confirmation M5.
+{% elif s.decision == "VENTE possible" %}Tendance baissière + marché propre + SMA baissier → <b>VENTE possible</b>. Attends confirmation M5.
+{% else %}Marché incertain → <b>ATTENDRE</b>. Ne force pas un trade.{% endif %}
 </p>
 </div>
 {% endif %}
 
 <table>
-<thead><tr><th>TF</th><th>Tendance</th><th>Ach.</th><th>Ven.</th><th>Agit.</th><th>Div.</th></tr></thead>
+<thead><tr><th>TF</th><th>Tendance</th><th>Ach.</th><th>Ven.</th><th>Agit.</th><th>Div.</th><th>SMA5</th><th>SMA25</th><th>Signal</th></tr></thead>
 <tbody>
 {% for t in tfs %}
 <tr class="{% if t.tendance == 'haussier' %}row-haussier{% elif t.tendance == 'baissier' %}row-baissier{% endif %}">
@@ -69,6 +69,9 @@ Marché incertain → <b>ATTENDRE</b>. Ne force pas un trade.
 <td>{{ t.pct_vendeurs }}%</td>
 <td>{{ t.pct_agitation }}%</td>
 <td>{{ 'H' if t.divergence == 'haussiere' else 'B' if t.divergence == 'baissiere' else '—' }}</td>
+<td>{{ t.sma5 if t.sma5 else '—' }}</td>
+<td>{{ t.sma25 if t.sma25 else '—' }}</td>
+<td class="{% if t.sma_signal == 'haussier' %}vert{% elif t.sma_signal == 'baissier' %}rouge{% endif %}"><b>{{ t.sma_signal or '—' }}</b></td>
 </tr>
 {% endfor %}
 </tbody>
@@ -76,27 +79,46 @@ Marché incertain → <b>ATTENDRE</b>. Ne force pas un trade.
 
 <div class="explication-table">
 <h3>📊 Détail par timeframe</h3>
-<p><b>H1</b> (1 heure) : tendance de fond. La plus fiable.</p>
-<p><b>M30</b> (30 min) : intermédiaire. Bon compromis.</p>
-<p><b>M15</b> (15 min) : court terme. Plus de bruit.</p>
-<p><b>M5</b> (5 min) : très court terme. Le plus agité.</p>
-<p class="conseil">💡 <b>Conseil :</b> si les 4 TF sont alignés → signal fort. Si 2/4 → signal moyen. Si 0/4 → pas de signal.</p>
+<p><b>H1</b> : tendance de fond. La plus fiable.</p>
+<p><b>M30</b> : intermédiaire. Bon compromis.</p>
+<p><b>M15</b> : court terme. Plus de bruit.</p>
+<p><b>M5</b> : très court terme. Le plus agité.</p>
+<p class="conseil">💡 <b>Conseil :</b> si les 4 TF sont alignés → signal fort. 2/4 → moyen. 0/4 → pas de signal.</p>
 </div>
+
+{% for t in tfs %}
+<div class="ohlc-box">
+<h4>{{ t.tf }} — OHLC (10 dernières bougies)</h4>
+<table class="ohlc-table">
+<thead><tr><th>#</th><th>Open</th><th>High</th><th>Low</th><th>Close</th><th>Range</th><th>Corps</th></tr></thead>
+<tbody>
+{% for b in t.ohlc %}
+<tr>
+<td>{{ loop.index }}</td>
+<td>{{ b.o }}</td>
+<td class="vert">{{ b.h }}</td>
+<td class="rouge">{{ b.l }}</td>
+<td>{{ b.c }}</td>
+<td>{{ "%.5f"|format(b.h - b.l) }}</td>
+<td>{{ "%.5f"|format(b.c - b.o if b.c > b.o else b.o - b.c) }}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
+{% endfor %}
 </section>
 {% endfor %}
 
 <section class="intro">
 <h2>⚠️ Avertissement</h2>
 <p>Ce dashboard est un <b>outil d'aide à la décision</b>. Il ne remplace pas l'analyse humaine. <b>Ne trade jamais uniquement sur ces signaux.</b></p>
-<p class="conseil">💡 <b>Conseil final :</b> la patience est la clé. Si un signal n'est pas clair, attends le prochain. Un bon trade vaut mieux que 10 mauvais.</p>
+<p class="conseil">💡 <b>Conseil final :</b> la patience est la clé. Un bon trade vaut mieux que 10 mauvais.</p>
 </section>
 
 </main>
 <script>
-setTimeout(function() {
-  console.log("🔄 Auto-refresh (5 min)");
-  location.reload();
-}, 5 * 60 * 1000);
+setTimeout(() => { console.log("🔄 Refresh 5 min"); location.reload(); }, 5*60*1000);
 let sec = 300;
 const timer = setInterval(() => {
   sec--;

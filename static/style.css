@@ -15,6 +15,7 @@ main{max-width:1200px;margin:0 auto}
 section{background:#15152a;border-radius:12px;padding:1rem;margin-bottom:1rem}
 section h2{color:#00d4ff;font-size:1.1rem;margin-bottom:.8rem;display:flex;justify-content:space-between;flex-wrap:wrap;gap:.5rem;align-items:center}
 section h3{color:#7b2ffc;font-size:.95rem;margin:1rem 0 .5rem}
+section h4{color:#00d4ff;font-size:.85rem;margin-bottom:.5rem}
 .intro p, .explication p, .explication-table p{color:rgba(255,255,255,.7);font-size:.85rem;line-height:1.6;margin-bottom:.4rem}
 .intro ul{margin-left:1.2rem;margin-bottom:.8rem}
 .intro li{color:rgba(255,255,255,.7);font-size:.85rem;line-height:1.7}
@@ -23,8 +24,8 @@ section h3{color:#7b2ffc;font-size:.95rem;margin:1rem 0 .5rem}
 .conclusion.vert{background:rgba(40,200,64,.2);color:#28c840}
 .conclusion.rouge{background:rgba(255,95,87,.2);color:#ff5f57}
 .conclusion.jaune{background:rgba(255,189,46,.2);color:#ffbd2e}
-.stats-box{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:.4rem;margin-bottom:.8rem;padding:.7rem;background:rgba(0,212,255,.03);border-radius:10px;border:1px solid rgba(0,212,255,.1)}
-.stat-item{display:flex;flex-direction:column;gap:.1rem;text-align:center;padding:.5rem .3rem;background:rgba(255,255,255,.03);border-radius:6px}
+.stats-box{display:grid;grid-template-columns:repeat(auto-fit,minmax(100px,1fr));gap:.4rem;margin-bottom:.8rem;padding:.7rem;background:rgba(0,212,255,.03);border-radius:10px;border:1px solid rgba(0,212,255,.1)}
+.stat-item{display:flex;flex-direction:column;gap:.1rem;text-align:center;padding:.4rem;background:rgba(255,255,255,.03);border-radius:6px}
 .stat-item.large{grid-column:1/-1}
 .lbl{font-size:.65rem;color:rgba(255,255,255,.5);text-transform:uppercase}
 .stat-item b{font-size:.9rem;color:#fff}
@@ -39,6 +40,9 @@ td{padding:.4rem;border-bottom:1px solid rgba(255,255,255,.05)}
 .pct{color:rgba(255,255,255,.5);font-size:.8rem}
 .vert{color:#28c840}
 .rouge{color:#ff5f57}
+.ohlc-box{margin-top:.8rem;padding:.7rem;background:rgba(255,255,255,.02);border-radius:8px;overflow-x:auto}
+.ohlc-table{font-size:.75rem;min-width:500px}
+.ohlc-table th, .ohlc-table td{padding:.25rem .4rem}
 @keyframes blinkGreen{0%,100%{background-color:rgba(40,200,64,.05)}50%{background-color:rgba(40,200,64,.2)}}
 @keyframes blinkRed{0%,100%{background-color:rgba(255,95,87,.05)}50%{background-color:rgba(255,95,87,.2)}}
 .row-haussier{animation:blinkGreen 1.5s infinite}
