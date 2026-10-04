@@ -4,20 +4,42 @@
 <h1>📊 Multi-TF Analysis</h1>
 <div>
 <span class="time">{{ now }}</span>
-<span class="countdown">🔄 <span id="countdown">5min</span></span>
+<span class="countdown">🔄 <span id="countdown">5min 0s</span></span>
 <a href="/logout" class="logout">🚪</a>
 </div>
 </header>
 <main>
 
-{% for pair, tfs in resultats.items() %}
-{% set c = conditions[pair] %}
-<section class="paire {% if c.signal == 'ACHAT' %}signal-achat{% elif c.signal == 'VENTE' %}signal-vente{% endif %}">
-<h2>
-<span>💱 {{ pair }}</span>
+<div class="resume">
+{% for pair, d in paires.items() %}
+<a href="#{{ pair }}" class="chip {{ d.cond.couleur }}">
+<b>{{ pair }}</b>
+<span>{{ d.prix }}</span>
+<em>{{ d.cond.signal }}</em>
+</a>
+{% endfor %}
+</div>
+
+{% for pair, d in paires.items() %}
+{% set c = d.cond %}
+{% set s = d.stats %}
+{% set tfs = d.tfs %}
+<section id="{{ pair }}" class="paire {% if c.signal == 'ACHAT' %}signal-achat{% elif c.signal == 'VENTE' %}signal-vente{% endif %}">
+
+<div class="tete">
+<div>
+<h2>💱 {{ pair }}</h2>
+<div class="prix">{{ d.prix }}
+{% if s %}<span class="var {{ 'vert' if s.var24 >= 0 else 'rouge' }}">{{ '%+.2f'|format(s.var24) }}%</span>{% endif %}
+</div>
+</div>
+<div class="badges">
 <span class="signal-badge {{ c.couleur }}">{{ c.signal }}</span>
 {% if c.bonus %}<span class="bonus">⭐ H4</span>{% endif %}
-</h2>
+</div>
+</div>
+
+<div class="fraicheur {{ d.fraicheur.etat }}">{{ d.fraicheur.texte }}</div>
 
 <div class="conseil {{ c.couleur }}">{{ c.conseil }}</div>
 
@@ -27,8 +49,28 @@
 {% endfor %}
 </div>
 
+{% if s %}
+<h3>📈 Statistiques générales</h3>
+<div class="stats">
+<div class="tile"><small>Variation 24 h</small><b class="{{ 'vert' if s.var24 >= 0 else 'rouge' }}">{{ '%+.2f'|format(s.var24) }}%</b></div>
+<div class="tile"><small>Variation 5 jours</small><b class="{{ 'vert' if s.var5j >= 0 else 'rouge' }}">{{ '%+.2f'|format(s.var5j) }}%</b></div>
+<div class="tile"><small>Fourchette 24 h</small><b class="mini">{{ s.bas24 }} → {{ s.haut24 }}</b></div>
+<div class="tile"><small>Fourchette 5 jours</small><b class="mini">{{ s.bas5j }} → {{ s.haut5j }}</b></div>
+<div class="tile"><small>Position (24 h)</small><b>{{ s.position }}%</b><div class="jauge"><i style="left:{{ s.position }}%"></i></div></div>
+<div class="tile"><small>Mouvement moyen H1</small><b>{{ '%.3f'|format(s.vol24) }}%</b> <em class="etat">{{ s.vol_etat }}</em></div>
+<div class="tile"><small>Bougies vertes (100 H1)</small><b class="{{ 'vert' if s.vertes >= 50 else 'rouge' }}">{{ s.vertes }}%</b></div>
+<div class="tile"><small>Série en cours (H1)</small><b class="{{ 'vert' if s.serie_sens == 'hausse' else 'rouge' if s.serie_sens == 'baisse' else '' }}">{{ s.serie_n }} {{ s.serie_sens }}</b></div>
+<div class="tile"><small>Alignement des TF</small><b class="{{ s.align_cls }}">{{ s.align_txt }}</b></div>
+<div class="tile"><small>Tendance de fond (H4)</small>
+{% if 'H4' in tfs %}<b class="{{ 'vert' if tfs['H4'].tendance == 'haussier' else 'rouge' if tfs['H4'].tendance == 'baissier' else '' }}">{{ tfs['H4'].tendance }}</b>{% else %}<b>—</b>{% endif %}
+</div>
+</div>
+{% endif %}
+
+<h3>⏱️ Analyse par timeframe</h3>
+<div class="scroll">
 <table>
-<thead><tr><th>TF</th><th>Tend.</th><th>Ach.</th><th>Ven.</th><th>Agit.</th><th>Div.</th><th>EMA5</th><th>EMA25</th><th>Sig.</th></tr></thead>
+<thead><tr><th>TF</th><th>Tendance</th><th>Ach. / Ven.</th><th>Agit.</th><th>Div.</th><th>EMA5</th><th>EMA25</th><th>Signal EMA</th></tr></thead>
 <tbody>
 {% for tf in ["H4", "H1", "M30", "M15", "M5"] %}
 {% if tf in tfs %}
@@ -36,20 +78,31 @@
 <tr class="{% if t.tendance == 'haussier' %}row-h{% elif t.tendance == 'baissier' %}row-b{% endif %}">
 <td><b>{{ t.tf }}</b></td>
 <td>{{ t.tendance }} <span class="pct">{{ t.pct_tendance }}%</span></td>
-<td class="vert">{{ t.pct_acheteurs }}%</td>
-<td class="rouge">{{ t.pct_vendeurs }}%</td>
+<td class="duelcell"><div class="duel"><i style="width:{{ t.pct_acheteurs }}%"></i></div><small><span class="vert">{{ t.pct_acheteurs }}</span> / <span class="rouge">{{ t.pct_vendeurs }}</span></small></td>
 <td>{{ t.pct_agitation }}%</td>
 <td>{{ 'H' if t.divergence == 'haussiere' else 'B' if t.divergence == 'baissiere' else '—' }}</td>
 <td>{{ t.ema5 or '—' }}</td>
 <td>{{ t.ema25 or '—' }}</td>
-<td class="{% if t.ema_signal == 'haussier' %}vert{% elif t.ema_signal == 'baissier' %}rouge{% endif %}"><b>{{ t.ema_signal or '—' }}</b></td>
+<td class="{% if t.ema_signal == 'haussier' %}vert{% elif t.ema_signal == 'baissier' %}rouge{% endif %}"><b>{{ t.ema_signal or '—' }}</b> <span class="pct">{{ t.ema_depuis }} bg</span></td>
 </tr>
 {% endif %}
 {% endfor %}
 </tbody>
 </table>
+</div>
 </section>
 {% endfor %}
+
+<details class="aide">
+<summary>ℹ️ Comment lire</summary>
+<ul>
+<li>Ach. / Ven. = % de bougies vertes / rouges sur les 10 dernières.</li>
+<li>Agit. = part du mouvement perdue en allers-retours. Si c'est haut, alors le marché est indécis.</li>
+<li>Div. : H = divergence haussière, B = divergence baissière, — = aucune.</li>
+<li>« N bg » = nombre de bougies depuis le croisement EMA5 / EMA25. Si N est grand, alors l'entrée est tardive.</li>
+<li>Toutes les bougies en cours sont ignorées : seules les bougies clôturées comptent.</li>
+</ul>
+</details>
 
 </main>
 <script>
