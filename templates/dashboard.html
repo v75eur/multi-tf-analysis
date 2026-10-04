@@ -1,7 +1,7 @@
-<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Multi-TF Bot</title><link rel="stylesheet" href="/static/style.css"></head>
+<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Multi-TF</title><link rel="stylesheet" href="/static/style.css"></head>
 <body>
 <header>
-<h1>🤖 Multi-TF Bot Guide</h1>
+<h1>📊 Multi-TF Analysis</h1>
 <div>
 <span class="time">{{ now }}</span>
 <button id="son" class="son" type="button">🔕 Son</button>
@@ -13,51 +13,24 @@
 <div class="compte">
 <label>💰 Capital ($)<input id="capital" type="number" min="0" step="any" inputmode="decimal" placeholder="ex : 100"></label>
 <label>🛡️ Risque max par trade (%)<input id="risque" type="number" min="0.1" max="5" step="0.1" value="1" inputmode="decimal"></label>
-<small>Le bot calcule ton lot automatiquement.</small>
+<small>Sert à calculer ton lot dans le guide. Compte en dollars.</small>
 </div>
 
 <main>
 
 <div class="bandeau-session {{ 'vert' if session_act.qualite in ('forte','excellente') else 'jaune' }}">
-🕐 <b>Session :</b> {{ session_act.txt }}
+🕐 <b>Session en cours :</b> {{ session_act.txt }}
 {% if session_act.qualite == 'faible' %}
-— <span class="rouge">⚠️ Évite de trader maintenant.</span>
+— <span class="rouge">⚠️ Évite de trader maintenant, les signaux sont peu fiables.</span>
 {% endif %}
 </div>
-
-{# ═════ JOURNAL VIVANT DU BOT ═════ #}
-{% if journal %}
-<details class="journal" open>
-<summary>📒 Journal du bot — ce qu'il t'a dit récemment ({{ journal|length }} entrées)</summary>
-<div class="journal-feed">
-{% for j in journal|reverse %}
-<div class="journal-entry {{ j.couleur }}">
-<div class="journal-head">
-<span class="journal-heure">{{ j.heure }}</span>
-<span class="journal-pair">{{ j.pair }}</span>
-<span class="journal-verdict {{ j.couleur }}">{{ j.verdict }}</span>
-<span class="journal-prix">{{ j.prix }}</span>
-</div>
-<div class="journal-action"><b>➡️ {{ j.action }}</b></div>
-<div class="journal-message">{{ j.message }}</div>
-{% if j.raisons %}
-<ul class="journal-raisons">
-{% for r in j.raisons %}<li>{{ r }}</li>{% endfor %}
-</ul>
-{% endif %}
-</div>
-{% endfor %}
-</div>
-</details>
-{% endif %}
 
 <div class="resume">
 {% for pair, d in paires.items() %}
-{% set cb = d.conseil_bot %}
-<a href="#{{ pair }}" class="chip {{ cb.couleur if cb else d.cond.couleur }}">
+<a href="#{{ pair }}" class="chip {{ d.cond.couleur }}">
 <b>{{ pair }}</b>
 <span>{{ d.prix }}</span>
-<em>{{ cb.verdict if cb else d.cond.signal }}</em>
+<em>{{ d.cond.signal }}</em>
 </a>
 {% endfor %}
 </div>
@@ -67,8 +40,8 @@
 {% set s = d.stats %}
 {% set tfs = d.tfs %}
 {% set gen = d.generale %}
-{% set cb = d.conseil_bot %}
-<section id="{{ pair }}" data-signal="{{ c.signal }}" class="paire {% if cb and cb.verdict == 'ENTRE MAINTENANT' %}signal-achat{% elif cb and cb.verdict == 'N\'ENTRE PAS' %}signal-vente{% endif %}">
+{% set fl = d.filtres %}
+<section id="{{ pair }}" data-signal="{{ c.signal }}" class="paire {% if c.signal == 'ACHAT' %}signal-achat{% elif c.signal == 'VENTE' %}signal-vente{% endif %}">
 
 <div class="tete">
 <div>
@@ -77,38 +50,41 @@
 {% if s %}<span class="var {{ 'vert' if s.var24 >= 0 else 'rouge' }}">{{ '%+.2f'|format(s.var24) }}%</span>{% endif %}
 </div>
 </div>
+<div class="badges">
+<span class="signal-badge {{ c.couleur }}">{{ c.signal }}</span>
+{% if c.bonus %}<span class="bonus">⭐ H4</span>{% endif %}
+</div>
 </div>
 
 <div class="fraicheur {{ d.fraicheur.etat }}">{{ d.fraicheur.texte }}</div>
 
-{# ═════ CONSEIL DU BOT EN GROS ═════ #}
-{% if cb %}
-<div class="bot-conseil {{ cb.couleur }}">
-<div class="bot-verdict">
-<span class="bot-emoji">
-{% if cb.couleur == 'vert' %}✅{% elif cb.couleur == 'rouge' %}🚫{% elif cb.couleur == 'jaune' %}⚠️{% else %}⏸️{% endif %}
-</span>
-<span class="bot-verdict-txt">{{ cb.verdict }}</span>
-</div>
-<div class="bot-action">➡️ <b>{{ cb.action }}</b></div>
-<div class="bot-message">{{ cb.message }}</div>
-{% if cb.raisons %}
-<div class="bot-raisons">
-<b>Pourquoi :</b>
-<ul>
-{% for r in cb.raisons %}<li>{{ r }}</li>{% endfor %}
-</ul>
-</div>
+{# ═════ TIMING D'ENTRÉE (NOUVEAU, EN GROS) ═════ #}
+{% if c.timing %}
+<div class="timing {{ c.timing.couleur }}">
+<span class="timing-emoji">{{ c.timing.emoji }}</span>
+<span class="timing-niveau">Timing d'entrée : {{ c.timing.niveau }}</span>
+<span class="timing-txt">{{ c.timing.txt }}</span>
+{% if c.timing.niveau != 'TARDIF' %}
+<span class="timing-lot">→ {{ c.timing.lot_conseil }}</span>
 {% endif %}
 </div>
 {% endif %}
 
-{# ═════ TIMING ═════ #}
-{% if c.timing %}
-<div class="timing {{ c.timing.couleur }}">
-<span class="timing-emoji">{{ c.timing.emoji }}</span>
-<span class="timing-niveau">Timing : {{ c.timing.niveau }}</span>
-<span class="timing-txt">{{ c.timing.txt }}</span>
+{# ═════ VERDICT DES FILTRES ═════ #}
+{% if fl %}
+<div class="verdict {{ fl.couleur }}">
+<div class="verdict-titre">
+🛡️ <b>Verdict global : {{ fl.verdict }}</b>
+</div>
+<div class="verdict-conseil">{{ fl.conseil }}</div>
+<div class="filtres-liste">
+{% for f in fl.filtres %}
+<div class="filtre-item {{ f.cls }}">
+<span class="filtre-nom">{{ f.nom }}</span>
+<span class="filtre-txt">{{ f.txt }}</span>
+</div>
+{% endfor %}
+</div>
 </div>
 {% endif %}
 
@@ -116,77 +92,177 @@
 {% if gen %}
 <div class="general {{ gen.couleur }}">
 <div class="general-titre">
-🧮 Tendance générale
+🧮 Tendance générale pondérée
 <span class="general-badge {{ gen.couleur }}">{{ gen.tendance }}</span>
 </div>
+
 <div class="general-jauge">
-<div class="general-barre"><i class="ach" style="width:{{ gen.ach_gen }}%"></i></div>
+<div class="general-barre">
+<i class="ach" style="width:{{ gen.ach_gen }}%"></i>
+</div>
 <div class="general-chiffres">
 <span class="vert">🟢 Acheteurs {{ gen.ach_gen }}%</span>
 <span class="rouge">🔴 Vendeurs {{ gen.ven_gen }}%</span>
 </div>
 <div class="general-score">
-Score : <b class="{{ gen.couleur }}">{{ '%+.1f'|format(gen.score_pct) }}%</b>
-<span class="pct">(M5×5 M15×4 M30×3 H1×2 H4×1)</span>
+Score pondéré : <b class="{{ gen.couleur }}">{{ '%+.1f'|format(gen.score_pct) }}%</b>
+<span class="pct">(M5×5 · M15×4 · M30×3 · H1×2 · H4×1 — les petits TF pèsent plus lourd)</span>
 </div>
 </div>
+
 <div class="general-align">
-<b>Alignement progressif :</b>
+<b>Alignement progressif (du plus petit au plus grand) :</b>
 <div class="align-chaine">
 {% for a in gen.align_detail %}
 <span class="align-item {{ 'vert' if a.sens == 'haussier' else 'rouge' if a.sens == 'baissier' else 'neutre' }}">
-{{ a.tf }}{% if a.sens == 'haussier' %}↑{% elif a.sens == 'baissier' %}↓{% else %}→{% endif %}
+{{ a.tf }}
+{% if a.sens == 'haussier' %}↑{% elif a.sens == 'baissier' %}↓{% else %}→{% endif %}
 </span>
 {% if not loop.last %}<span class="align-fleche">→</span>{% endif %}
 {% endfor %}
 </div>
+{% if gen.align_n >= 3 and gen.align_sens %}
+<div class="align-verdict {{ 'vert' if gen.align_sens == 'haussier' else 'rouge' }}">
+✅ {{ gen.align_n }} TF consécutifs alignés {{ 'haussier' if gen.align_sens == 'haussier' else 'baissier' }} ({{ gen.align_sens }}) — mouvement récent cohérent.
 </div>
+{% elif gen.align_n > 0 and gen.align_sens %}
+<div class="align-verdict jaune">
+⚠️ Seulement {{ gen.align_n }} TF aligné(s) {{ gen.align_sens }} — pas encore de consensus progressif.
+</div>
+{% else %}
+<div class="align-verdict jaune">⏸️ Aucun alignement progressif net pour le moment.</div>
+{% endif %}
+</div>
+
 {% if gen.confirmation %}
-<div class="confirmation {{ gen.confirmation.couleur }}">✅ {{ gen.confirmation.txt }}</div>
+<div class="confirmation {{ gen.confirmation.couleur }}">
+{{ gen.confirmation.txt }}
+</div>
 {% endif %}
 </div>
 {% endif %}
+
+<div class="conseil {{ c.couleur }}">{{ c.conseil }}</div>
+
+{% for a in c.alertes %}
+<div class="alerte {{ a.cls }}">{{ a.txt }}</div>
+{% endfor %}
 
 {% if d.guide %}
 {% set g = d.guide %}
 <div class="guide {{ g.feu }}">
-<div class="guide-titre">🧭 Guide du trade : {{ g.sens }} — {% if g.feu == 'vert' %}✅ tu peux entrer{% else %}⏳ attends{% endif %}</div>
-<ol class="etapes">
-<li><b>Avant d'entrer :</b> vérifie qu'aucune grosse annonce n'arrive dans l'heure (inflation, emploi US, banque centrale).</li>
-<li><b>Quand :</b> à la clôture de la bougie M5, vers <b>{{ g.heure }}</b> (heure du Bénin).</li>
-<li><b>Ordre :</b> {{ g.sens }} au marché, autour de <b>{{ g.prix }}</b>.</li>
-{% if g.stop %}
-<li><b>Stop loss :</b> <b>{{ g.stop }}</b>. Place-le immédiatement, ne l'éloigne JAMAIS.</li>
-<li><b>Objectif :</b> <b>{{ g.objectif }}</b> (ratio {{ g.ratio }}).</li>
-<li><b>Lot :</b> <span class="lotbox" data-dist="{{ g.dist }}" data-gain="{{ g.dist_obj }}" data-contrat="{{ g.contrat or '' }}" data-niveau="{{ g.lot_niveau }}"><span class="lotres">Entre ton capital en haut.</span></span></li>
-<div class="lot-conseil {{ 'vert' if g.lot_niveau == 'PLEIN' else 'jaune' if g.lot_niveau == 'DEMI' else 'rouge' }}">
-🧮 <b>Lot :</b> {{ g.lot_txt }}
-</div>
-<li><b>Mi-chemin :</b> si le prix atteint <b>{{ g.moitie }}</b>, tu peux remonter ton stop à ton prix d'entrée (tu ne peux plus perdre).</li>
+<div class="guide-titre">🧭 Guide du trade : {{ g.sens }} —
+{% if g.feu == 'vert' %}✅ tu peux entrer{% else %}⏳ attends, conditions pas idéales{% endif %}</div>
+{% if g.raisons %}
+<ul class="raisons">{% for r in g.raisons %}<li>{{ r }}</li>{% endfor %}</ul>
 {% endif %}
-<li><b>Si ça tourne mal :</b> stop touché → accepte la perte, arrête-toi 30 min sur cette paire. Ne re-entre pas « pour te refaire ».</li>
-<li><b>Règle de survie :</b> max 1 % par trade. Après 2 pertes de suite, arrête pour la journée.</li>
+<ol class="etapes">
+<li><b>Avant d'entrer :</b> vérifie qu'aucune grosse annonce économique n'arrive dans l'heure (inflation, emploi américain, décision de banque centrale). Si c'est le cas, n'entre pas : la volatilité peut te sortir sur le stop en quelques secondes.</li>
+<li><b>Quand :</b> à la clôture de la bougie M5, vers <b>{{ g.heure }}</b> (heure du Bénin). Si à ce moment-là le signal a disparu (les TF ne sont plus alignés), n'entre pas : un signal qui s'évapore est un piège.</li>
+<li><b>Ordre :</b> {{ 'ACHAT' if g.sens == 'ACHAT' else 'VENTE' }} au marché, autour de <b>{{ g.prix }}</b>.</li>
+{% if g.stop %}
+<li><b>Stop loss :</b> <b>{{ g.stop }}</b>. Place-le immédiatement après l'entrée et ne l'éloigne JAMAIS. Si le prix va contre toi, tu perds ce que tu as prévu de perdre, pas plus.</li>
+<li><b>Objectif :</b> <b>{{ g.objectif }}</b> (ratio gain/risque {{ g.ratio }}). Si le ratio est ≥ 2, c'est très bon. Si c'est entre 1,5 et 2, c'est acceptable. En dessous, passe ton tour.</li>
+<li><b>Lot :</b> <span class="lotbox" data-dist="{{ g.dist }}" data-gain="{{ g.dist_obj }}" data-contrat="{{ g.contrat or '' }}" data-niveau="{{ g.lot_niveau }}"><span class="lotres">Entre ton capital en haut de la page.</span></span></li>
+<div class="lot-conseil {{ 'vert' if g.lot_niveau == 'PLEIN' else 'jaune' if g.lot_niveau == 'DEMI' else 'rouge' }}">
+🧮 <b>Conseil de lot (timing {{ g.timing.niveau if g.timing else '?' }}) :</b> {{ g.lot_txt }}
+</div>
+<li><b>Gestion en cours de route :</b> si le prix atteint <b>{{ g.moitie }}</b> (la moitié du chemin vers l'objectif), tu peux remonter ton stop à ton prix d'entrée. À partir de ce moment, tu ne peux plus perdre, seulement gagner moins ou gagner plus.</li>
+{% else %}
+<li><b>Stop et objectif :</b> pas de niveaux clairs devant toi. N'entre pas. Attends qu'un range clair se forme avec un creux et un sommet bien identifiables.</li>
+{% endif %}
+<li><b>Si ça tourne mal :</b> si le stop est touché, accepte la perte et arrête-toi pour cette paire au moins 30 minutes. Ne re-entre pas « pour te refaire » juste après. Si la tendance H1 s'inverse avant ton objectif, tu peux fermer à la main — mieux vaut un petit gain qu'une grosse perte.</li>
+<li><b>Règles de survie :</b> maximum 1 % du capital par trade. Après 2 pertes de suite dans la même journée, arrête-toi jusqu'au lendemain. Le marché sera encore là demain, ton capital peut-être pas.</li>
 </ol>
-<div class="note">Teste en démo 2-3 semaines minimum. Le bot filtre, il ne garantit rien. La discipline compte plus que le signal.</div>
+<div class="note">Teste d'abord en compte démo pendant 2 à 3 semaines minimum avant de risquer de l'argent réel. Ce guide aide à filtrer les trades, il ne garantit aucun gain. La discipline (respecter le stop, ne pas sur-trader, tenir un journal) compte plus que le signal lui-même.</div>
 </div>
 {% endif %}
 
-{% if s %}
-<h3>📈 Stats</h3>
-<div class="stats">
-<div class="tile"><small>Var 24h</small><b class="{{ 'vert' if s.var24 >= 0 else 'rouge' }}">{{ '%+.2f'|format(s.var24) }}%</b></div>
-<div class="tile"><small>Var 5j</small><b class="{{ 'vert' if s.var5j >= 0 else 'rouge' }}">{{ '%+.2f'|format(s.var5j) }}%</b></div>
-<div class="tile"><small>Fourchette 24h</small><b class="mini">{{ s.bas24 }} → {{ s.haut24 }}</b></div>
-<div class="tile"><small>Position 24h</small><b>{{ s.position }}%</b><div class="jauge"><i style="left:{{ s.position }}%"></i></div></div>
-<div class="tile"><small>Mouv. moyen H1</small><b>{{ '%.3f'|format(s.vol24) }}%</b> <em class="etat">{{ s.vol_etat }}</em></div>
-<div class="tile"><small>Bougies vertes H1</small><b class="{{ 'vert' if s.vertes >= 50 else 'rouge' }}">{{ s.vertes }}%</b></div>
+<div class="conditions-row">
+{% for k, v in c.details.items() %}
+<span class="cond {% if v %}ok{% else %}ko{% endif %}">{{ '✅' if v else '❌' }} {{ k }}</span>
+{% endfor %}
 </div>
+
+{% if s %}
+<h3>📈 Statistiques générales</h3>
+<div class="stats">
+<div class="tile"><small>Variation 24 h</small><b class="{{ 'vert' if s.var24 >= 0 else 'rouge' }}">{{ '%+.2f'|format(s.var24) }}%</b></div>
+<div class="tile"><small>Variation 5 jours</small><b class="{{ 'vert' if s.var5j >= 0 else 'rouge' }}">{{ '%+.2f'|format(s.var5j) }}%</b></div>
+<div class="tile"><small>Fourchette 24 h</small><b class="mini">{{ s.bas24 }} → {{ s.haut24 }}</b></div>
+<div class="tile"><small>Fourchette 5 jours</small><b class="mini">{{ s.bas5j }} → {{ s.haut5j }}</b></div>
+<div class="tile"><small>Position (24 h)</small><b>{{ s.position }}%</b><div class="jauge"><i style="left:{{ s.position }}%"></i></div></div>
+<div class="tile"><small>Mouvement moyen H1</small><b>{{ '%.3f'|format(s.vol24) }}%</b> <em class="etat">{{ s.vol_etat }}</em></div>
+<div class="tile"><small>Bougies vertes (100 H1)</small><b class="{{ 'vert' if s.vertes >= 50 else 'rouge' }}">{{ s.vertes }}%</b></div>
+<div class="tile"><small>Série en cours (H1)</small><b class="{{ 'vert' if s.serie_sens == 'hausse' else 'rouge' if s.serie_sens == 'baisse' else '' }}">{{ s.serie_n }} {{ s.serie_sens }}</b></div>
+<div class="tile"><small>Alignement des TF</small><b class="{{ s.align_cls }}">{{ s.align_txt }}</b></div>
+<div class="tile"><small>Tendance de fond (H4)</small>
+{% if 'H4' in tfs %}<b class="{{ 'vert' if tfs['H4'].tendance == 'haussier' else 'rouge' if tfs['H4'].tendance == 'baissier' else '' }}">{{ tfs['H4'].tendance }}</b>{% else %}<b>—</b>{% endif %}
+</div>
+</div>
+{% endif %}
+
+{% if d.sltp %}
+<h3>🎯 Stop & objectif (si tu entres maintenant)</h3>
+<div class="duo">
+{% for nom, cote in [('ACHAT', d.sltp.achat), ('VENTE', d.sltp.vente)] %}
+<div class="bloc {{ 'actif' if c.signal == nom }}">
+<b class="{{ 'vert' if nom == 'ACHAT' else 'rouge' }}">{{ nom }}</b>
+{% if cote %}
+<div>Stop : <b>{{ cote.stop }}</b> <span class="pct">(risque {{ cote.risque_pct }}%)</span></div>
+<div>Objectif : <b>{{ cote.objectif }}</b> <span class="pct">(gain {{ cote.gain_pct }}%)</span></div>
+<div>Ratio gain/risque : <b class="{{ 'vert' if cote.ok else 'rouge' }}">{{ cote.ratio }}</b></div>
+{% else %}
+<div class="pct">Pas d'objectif clair pour le moment.</div>
+{% endif %}
+</div>
+{% endfor %}
+</div>
+{% endif %}
+
+{% if d.niv %}
+<h3>🧱 Niveaux & contexte</h3>
+<div class="stats">
+<div class="tile"><small>Résistance proche (plafond)</small><b>{{ d.niv.res or '—' }}</b>{% if d.niv.res_pct is not none %} <em class="etat">+{{ d.niv.res_pct }}%</em>{% endif %}</div>
+<div class="tile"><small>Support proche (plancher)</small><b>{{ d.niv.sup or '—' }}</b>{% if d.niv.sup_pct is not none %} <em class="etat">−{{ d.niv.sup_pct }}%</em>{% endif %}</div>
+{% for nom in ['M15', 'H1'] %}
+{% if nom in tfs %}
+{% set cs = tfs[nom].cassure %}
+<div class="tile"><small>Cassure {{ nom }} (20 bougies)</small>
+{% if cs.sens == 'haussiere' %}<b class="vert">↑ haussière</b>{% elif cs.sens == 'baissiere' %}<b class="rouge">↓ baissière</b>{% else %}<b>aucune</b>{% endif %}
+{% if cs.il_y_a is not none %} <em class="etat">{{ 'maintenant' if cs.il_y_a == 0 else 'il y a ' ~ cs.il_y_a ~ ' bg' }}</em>{% endif %}
+</div>
+{% endif %}
+{% endfor %}
+{% if d.heures %}
+<div class="tile wide"><small>🕐 Heures les plus actives (heure du Bénin)</small>
+{% if d.heures.plate %}<b class="mini">Activité identique à toutes les heures</b>{% else %}<b class="mini">{{ d.heures.top|join(' · ') }}</b>{% endif %}
+<div class="sous">Maintenant : activité {{ d.heures.now_etat }}{% if d.heures.now_etat != 'inconnue' %} (×{{ d.heures.now_ratio }}){% endif %}</div>
+</div>
+{% endif %}
+</div>
+{% endif %}
+
+<h3>🧪 Test sur le passé</h3>
+{% if d.bt %}
+{% set b = d.bt %}
+<div class="stats">
+<div class="tile"><small>Signaux trouvés</small><b>{{ b.n }}</b> <em class="etat">sur ≈ {{ b.heures }} h</em></div>
+<div class="tile"><small>Bon sens après 1 h</small><b class="{{ b.couleur }}">{% if b.pct is not none %}{{ b.pct }}%{% else %}—{% endif %}</b></div>
+<div class="tile"><small>ACHAT dans le bon sens</small><b>{{ b.achat_w }}/{{ b.achat_n }}</b></div>
+<div class="tile"><small>VENTE dans le bon sens</small><b>{{ b.vente_w }}/{{ b.vente_n }}</b></div>
+<div class="tile"><small>Avec stop & objectif</small><b>{{ b.sim_tp }} gagnés · {{ b.sim_sl }} perdus</b><div class="sous">{{ b.sim_to }} sortis sans toucher (4 h)</div></div>
+<div class="tile"><small>Gain moyen par trade</small><b class="{{ b.sim_couleur }}">{% if b.sim_r is not none %}{{ '%+.2f'|format(b.sim_r) }} R{% else %}—{% endif %}</b><div class="sous">sur {{ b.sim_n }} trades simulés</div></div>
+</div>
+<div class="note">{{ b.verdict }}<br>{{ b.sim_verdict }}<br>1 R = ce que tu risques sur un trade. Si +1 R, alors tu gagnes autant que ce que tu risquais. Le test ne compte pas le spread.</div>
+{% else %}
+<div class="note">Pas assez de données pour tester le signal sur le passé.</div>
 {% endif %}
 
 <h3>⏱️ Analyse par timeframe</h3>
 <div class="scroll">
 <table>
-<thead><tr><th>TF</th><th>Poids</th><th>Tendance</th><th>Ach/Ven</th><th>Agit</th><th>EMA5</th><th>EMA25</th><th>Signal EMA</th><th>Bougie</th></tr></thead>
+<thead><tr><th>TF</th><th>Poids</th><th>Tendance</th><th>Ach. / Ven.</th><th>Agit.</th><th>Div.</th><th>EMA5</th><th>EMA25</th><th>Signal EMA</th><th>Cassure</th><th>Bougie</th></tr></thead>
 <tbody>
 {% for tf in ["H4", "H1", "M30", "M15", "M5"] %}
 {% if tf in tfs %}
@@ -194,9 +270,10 @@ Score : <b class="{{ gen.couleur }}">{{ '%+.1f'|format(gen.score_pct) }}%</b>
 <tr class="{% if t.tendance == 'haussier' %}row-h{% elif t.tendance == 'baissier' %}row-b{% endif %}">
 <td><b>{{ t.tf }}</b></td>
 <td><span class="poids">×{{ {'H4':1,'H1':2,'M30':3,'M15':4,'M5':5}[tf] }}</span></td>
-<td>{{ t.tendance }}</td>
-<td><small><span class="vert">{{ t.pct_acheteurs }}</span>/<span class="rouge">{{ t.pct_vendeurs }}</span></small></td>
+<td>{{ t.tendance }} <span class="pct">{{ t.pct_tendance }}%</span></td>
+<td class="duelcell"><div class="duel"><i style="width:{{ t.pct_acheteurs }}%"></i></div><small><span class="vert">{{ t.pct_acheteurs }}</span> / <span class="rouge">{{ t.pct_vendeurs }}</span></small></td>
 <td>{{ t.pct_agitation }}%</td>
+<td>{{ 'H' if t.divergence == 'haussiere' else 'B' if t.divergence == 'baissiere' else '—' }}</td>
 <td>{{ t.ema5 or '—' }}</td>
 <td>{{ t.ema25 or '—' }}</td>
 <td class="{% if t.ema_signal == 'haussier' %}vert{% elif t.ema_signal == 'baissier' %}rouge{% endif %}"><b>{{ t.ema_signal or '—' }}</b>
@@ -205,8 +282,11 @@ Score : <b class="{{ gen.couleur }}">{{ '%+.1f'|format(gen.score_pct) }}%</b>
 {% if dep <= 5 %}<span class="timing-mini vert">🔥 {{ dep }} bg</span>
 {% elif dep <= 12 %}<span class="timing-mini jaune">⏳ {{ dep }} bg</span>
 {% else %}<span class="timing-mini rouge">❌ {{ dep }} bg</span>{% endif %}
+{% else %}
+<span class="pct">{{ t.ema_depuis }} bg</span>
 {% endif %}
 </td>
+<td>{% if t.cassure.sens == 'haussiere' %}<span class="vert">↑</span>{% elif t.cassure.sens == 'baissiere' %}<span class="rouge">↓</span>{% else %}—{% endif %}{% if t.cassure.il_y_a is not none %} <span class="pct">{{ 'now' if t.cassure.il_y_a == 0 else t.cassure.il_y_a ~ ' bg' }}</span>{% endif %}</td>
 <td>{% for m in t.motifs %}<span class="tag {{ m.cls }}">{{ m.txt }}</span> {% else %}—{% endfor %}</td>
 </tr>
 {% endif %}
@@ -214,33 +294,56 @@ Score : <b class="{{ gen.couleur }}">{{ '%+.1f'|format(gen.score_pct) }}%</b>
 </tbody>
 </table>
 </div>
-
-<h3>🧪 Backtest</h3>
-{% if d.bt %}
-<div class="stats">
-<div class="tile"><small>Signaux</small><b>{{ d.bt.n }}</b></div>
-<div class="tile"><small>Réussite 1h</small><b class="{{ d.bt.couleur }}">{{ d.bt.pct }}%</b></div>
-<div class="tile"><small>Stop & objectif</small><b>{{ d.bt.sim_tp }} TP · {{ d.bt.sim_sl }} SL</b></div>
-<div class="tile"><small>Gain moyen</small><b class="{{ d.bt.sim_couleur }}">{{ '%+.2f'|format(d.bt.sim_r) if d.bt.sim_r else '—' }} R</b></div>
-</div>
-<div class="note">{{ d.bt.verdict }} {{ d.bt.sim_verdict }} Le spread n'est pas compté.</div>
-{% else %}
-<div class="note">Pas assez de données pour backtester.</div>
-{% endif %}
-
 </section>
 {% endfor %}
 
+{% if historique %}
+<details class="journal">
+<summary>📒 Journal de bord — 10 derniers signaux</summary>
+<table class="journal-table">
+<thead><tr><th>Heure</th><th>Paire</th><th>Signal</th><th>Prix</th><th>Guide</th></tr></thead>
+<tbody>
+{% for h in historique|reverse %}
+<tr>
+<td>{{ h.heure }}</td>
+<td><b>{{ h.pair }}</b></td>
+<td class="{{ 'vert' if h.sens == 'ACHAT' else 'rouge' }}">{{ h.sens }}</td>
+<td>{{ h.prix }}</td>
+<td>{% if h.feu == 'vert' %}✅ vert{% elif h.feu == 'orange' %}⏳ orange{% else %}—{% endif %}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+<div class="note">Ce journal liste les signaux détectés dans ta session. Il ne dit pas s'ils ont été gagnants — c'est à toi de noter tes trades dans un carnet séparé pour progresser.</div>
+</details>
+{% endif %}
+
 <details class="aide">
-<summary>ℹ️ Comment lire le bot</summary>
+<summary>ℹ️ Comment lire</summary>
 <ul>
-<li><b>🤖 Le bot te dit quoi faire</b> : "ENTRE MAINTENANT" (feu vert), "PRUDENCE — DEMI-LOT" (jaune), "N'ENTRE PAS" (rouge), "ATTENDRE" (gris).</li>
-<li><b>Chaque conseil est unique</b> : il combine session + timing + tendance H4/H1 + volatilité + résistance + ratio + corrélation.</li>
-<li><b>📒 Le journal du bot</b> garde la trace de ses conseils. Il enregistre quand le verdict change pour une paire.</li>
-<li><b>🔥 Timing d'entrée</b> : combien de bougies M5 depuis le croisement EMA5/EMA25. ≤5 = frais (lot plein), 6-12 = en cours (demi-lot), >12 = tardif (n'entre pas).</li>
-<li><b>🛡️ Les raisons</b> sous chaque conseil te disent POURQUOI le bot dit ça. Lis-les avant d'agir.</li>
-<li>Toutes les bougies en cours sont ignorées : seules les clôturées comptent.</li>
-<li>Teste en démo 2-3 semaines minimum.</li>
+<li><b>🔥 Timing d'entrée</b> : c'est le plus important. Il regarde combien de bougies M5 se sont écoulées depuis le croisement EMA5/EMA25. Si ≤ 5 bougies → FRAIS (lot plein). Si 6-12 → EN COURS (demi-lot). Si > 12 → TARDIF (n'entre pas, attends le prochain croisement). C'est ça qui fait la différence entre entrer au début du mouvement et acheter le sommet.</li>
+<li><b>🛡️ Verdict global</b> : combine tous les filtres (session, volatilité, tendance H4/H1, timing, duplication, corrélation). Si c'est "BLOQUÉ" en rouge, ne prends pas le trade même si le signal est vert. Si c'est "PRUDENCE" en jaune, réduis ton lot ou attends. Si c'est "FEU VERT", alors tu peux trader.</li>
+<li><b>Session</b> : les meilleures heures sont le chevauchement Londres+New York (15h-18h heure du Bénin) et Londres seul (9h-15h). En Asie (1h-9h) et la nuit, les signaux sont peu fiables.</li>
+<li><b>Tendance H4/H1</b> : si H4 ET H1 sont contre ton signal, c'est un pullback (piège) → BLOQUÉ. Si un seul est contre → PRUDENCE, réduis ton lot.</li>
+<li><b>Signal récent</b> : si le même signal a été donné il y a moins de 30 min, ce n'est pas un nouveau signal, c'est le même mouvement.</li>
+<li><b>Corrélation</b> : EURUSD et GBPUSD bougent souvent ensemble. Prendre les deux = doubler ton risque.</li>
+<li><b>🧮 Tendance générale pondérée</b> : combine tous les TF avec un poids. Les petits TF (M5×5, M15×4) pèsent plus lourd que les grands (M30×3, H1×2, H4×1), car ils reflètent le mouvement récent.</li>
+<li><b>Alignement progressif</b> : on regarde M5 → M15 → M30 → H1. Si les 4 sont dans le même sens, alors le mouvement est cohérent.</li>
+<li><b>Confirmation</b> : si M15+M30+H1 alignés ET croisement EMA M5 récent (≤3 bougies) après clôture dans le même sens, alors ACHAT ou VENTE confirmé.</li>
+<li>Signal « détecté » : les timeframes vont dans le même sens. Ce n'est pas une garantie que le prix continue.</li>
+<li>Ach. / Ven. = % de bougies vertes / rouges sur les 10 dernières.</li>
+<li>Agit. = part du mouvement perdue en allers-retours. Si c'est haut, alors le marché est indécis.</li>
+<li>Div. : H = divergence haussière, B = divergence baissière, — = aucune.</li>
+<li>« N bg » = nombre de bougies depuis le croisement EMA ou la cassure.</li>
+<li>Cassure : le prix a fermé au-dessus du plus haut (↑) ou sous le plus bas (↓) des 20 bougies d'avant.</li>
+<li>Mèche basse : les vendeurs ont essayé de pousser et ont échoué. Mèche haute : l'inverse.</li>
+<li>Englobante : la dernière bougie avale entièrement la précédente.</li>
+<li>Grande ×N : la bougie est N fois plus grande que la moyenne. Si N ≥ 2, alors attends.</li>
+<li>Stop : sous le dernier creux (achat) ou au-dessus du dernier sommet (vente). Si le ratio est sous 1,5, le trade ne vaut pas le coup.</li>
+<li>Lot : calculé pour un compte en dollars (EURUSD, GBPUSD, or). Vérifie avec le calculateur de ta plateforme. Pour V75, le lot n'est pas calculé.</li>
+<li>Test sur le passé : c'est une indication, pas une garantie. Le spread n'est pas compté.</li>
+<li>🔔 Son : si tu l'actives, alors un bip t'avertit d'un nouveau signal tant que la page reste ouverte.</li>
+<li>Toutes les bougies en cours sont ignorées : seules les bougies clôturées comptent.</li>
 </ul>
 </details>
 
@@ -295,20 +398,20 @@ function calcLots() {
     var gain = parseFloat(el.dataset.gain);
     var ct = parseFloat(el.dataset.contrat);
     var niveau = el.dataset.niveau || 'PLEIN';
-    if (!cap || !risk) { out.textContent = 'Entre ton capital en haut.'; return; }
+    if (!cap || !risk) { out.textContent = 'Entre ton capital en haut de la page pour calculer le lot.'; return; }
     var maxp = cap * risk / 100;
     if (niveau === 'DEMI') maxp = maxp / 2;
     if (!ct) {
-      out.textContent = 'Lot non calculé. Perte max ' + maxp.toFixed(2) + ' $.';
+      out.textContent = 'Lot non calculé pour cet actif. Ta perte maximum est ' + maxp.toFixed(2) + ' $. Si ton stop te fait perdre plus, alors baisse le lot.';
       return;
     }
     var lot = Math.floor(maxp / (dist * ct) * 100) / 100;
     if (lot < 0.01) {
-      out.textContent = 'Capital trop petit pour ce stop. Ne prends pas ce trade.';
+      out.textContent = 'Ton capital est trop petit pour ce stop : même 0.01 lot risque plus de ' + risk + ' %. Ne prends pas ce trade.';
       return;
     }
     var prefix = niveau === 'DEMI' ? 'Lot conseillé (demi) : ' : 'Lot conseillé : ';
-    out.textContent = prefix + lot.toFixed(2) + ' → perte max ≈ ' + (lot * dist * ct).toFixed(2) + ' $ · gain ≈ ' + (lot * gain * ct).toFixed(2) + ' $';
+    out.textContent = prefix + lot.toFixed(2) + ' → perte max ≈ ' + (lot * dist * ct).toFixed(2) + ' $ si le stop est touché · gain ≈ ' + (lot * gain * ct).toFixed(2) + ' $ à l\'objectif.';
   });
 }
 
@@ -357,10 +460,12 @@ async function rafraichir() {
       if (sonOn) bip();
       document.title = '🔔 ' + alertes.join(', ');
     } else {
-      document.title = 'Multi-TF Bot';
+      document.title = 'Multi-TF';
     }
     sec = 300;
-  } catch (e) { sec = 60; }
+  } catch (e) {
+    sec = 60;
+  }
   enCours = false;
 }
 
