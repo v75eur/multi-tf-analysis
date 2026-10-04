@@ -12,39 +12,42 @@ header h1{font-size:1rem}
 .countdown{background:rgba(0,212,255,.1);padding:.3rem .7rem;border-radius:50px;font-size:.75rem;color:#00d4ff;margin-right:.5rem}
 .logout{color:#ff5f57;text-decoration:none}
 main{max-width:1200px;margin:0 auto}
-section{background:#15152a;border-radius:12px;padding:1rem;margin-bottom:1rem}
+section{background:#15152a;border-radius:12px;padding:1rem;margin-bottom:1rem;border:1px solid transparent}
+section.signal-achat{border:2px solid #28c840;animation:pulseGreen 2s infinite}
+section.signal-vente{border:2px solid #ff5f57;animation:pulseRed 2s infinite}
+@keyframes pulseGreen{0%,100%{box-shadow:0 0 0 0 rgba(40,200,64,.5)}50%{box-shadow:0 0 0 15px rgba(40,200,64,0)}}
+@keyframes pulseRed{0%,100%{box-shadow:0 0 0 0 rgba(255,95,87,.5)}50%{box-shadow:0 0 0 15px rgba(255,95,87,0)}}
 section h2{color:#00d4ff;font-size:1.1rem;margin-bottom:.8rem;display:flex;justify-content:space-between;flex-wrap:wrap;gap:.5rem;align-items:center}
-section h3{color:#7b2ffc;font-size:.95rem;margin:1rem 0 .5rem}
-section h4{color:#00d4ff;font-size:.85rem;margin-bottom:.5rem}
-.intro p{color:rgba(255,255,255,.7);font-size:.85rem;line-height:1.6;margin-bottom:.4rem}
-.intro ul{margin-left:1.2rem;margin-bottom:.8rem}
-.intro li{color:rgba(255,255,255,.7);font-size:.85rem;line-height:1.7}
-.conseil{background:rgba(255,189,46,.08);border-left:3px solid #ffbd2e;padding:.6rem .8rem;border-radius:6px;color:rgba(255,255,255,.8);font-size:.85rem;line-height:1.6;margin-top:.6rem}
-.conclusion{font-size:.9rem;padding:.3rem .8rem;border-radius:50px;font-weight:700}
-.conclusion.vert{background:rgba(40,200,64,.2);color:#28c840}
-.conclusion.rouge{background:rgba(255,95,87,.2);color:#ff5f57}
-.conclusion.jaune{background:rgba(255,189,46,.2);color:#ffbd2e}
+.signal-badge{font-size:.9rem;padding:.3rem .9rem;border-radius:50px;font-weight:700}
+.signal-badge.vert{background:rgba(40,200,64,.2);color:#28c840;animation:blinkGreen 1.5s infinite}
+.signal-badge.rouge{background:rgba(255,95,87,.2);color:#ff5f57;animation:blinkRed 1.5s infinite}
+.signal-badge.jaune{background:rgba(255,189,46,.2);color:#ffbd2e}
 .bonus{font-size:.7rem;background:rgba(123,47,252,.2);color:#a371f7;padding:.2rem .5rem;border-radius:50px}
-.conditions-box{background:rgba(0,212,255,.03);padding:.7rem;border-radius:10px;margin-bottom:.8rem;border:1px solid rgba(0,212,255,.1)}
-.cond-item{padding:.3rem .5rem;font-size:.8rem;border-bottom:1px solid rgba(255,255,255,.03)}
-.cond-ok{color:#28c840}
-.cond-ko{color:#ff5f57}
-table{width:100%;border-collapse:collapse;font-size:.85rem;margin-top:.5rem}
+.conseil{padding:.6rem .9rem;border-radius:8px;font-size:.85rem;margin-bottom:.8rem;line-height:1.5}
+.conseil.vert{background:rgba(40,200,64,.1);border-left:3px solid #28c840;color:#a0e8a8}
+.conseil.rouge{background:rgba(255,95,87,.1);border-left:3px solid #ff5f57;color:#ffb0aa}
+.conseil.jaune{background:rgba(255,189,46,.08);border-left:3px solid #ffbd2e;color:#f0d590}
+.conditions-row{display:flex;flex-wrap:wrap;gap:.3rem;margin-bottom:.8rem}
+.cond{font-size:.7rem;padding:.3rem .6rem;border-radius:50px;background:rgba(255,255,255,.03)}
+.cond.ok{background:rgba(40,200,64,.1);color:#28c840}
+.cond.ko{background:rgba(255,95,87,.1);color:#ff5f57}
+table{width:100%;border-collapse:collapse;font-size:.85rem}
 th{color:#00d4ff;text-align:left;padding:.4rem;border-bottom:2px solid rgba(0,212,255,.3);font-size:.7rem;text-transform:uppercase}
 td{padding:.4rem;border-bottom:1px solid rgba(255,255,255,.05)}
 .pct{color:rgba(255,255,255,.5);font-size:.8rem}
 .vert{color:#28c840}
 .rouge{color:#ff5f57}
-.ohlc-box{margin-top:.8rem;padding:.7rem;background:rgba(255,255,255,.02);border-radius:8px;overflow-x:auto}
-.ohlc-table{font-size:.75rem;min-width:500px}
-.ohlc-table th, .ohlc-table td{padding:.25rem .4rem}
-@keyframes blinkGreen{0%,100%{background-color:rgba(40,200,64,.05)}50%{background-color:rgba(40,200,64,.2)}}
-@keyframes blinkRed{0%,100%{background-color:rgba(255,95,87,.05)}50%{background-color:rgba(255,95,87,.2)}}
-.row-haussier{animation:blinkGreen 1.5s infinite}
-.row-baissier{animation:blinkRed 1.5s infinite}
+@keyframes blinkGreen{0%,100%{opacity:1}50%{opacity:.5}}
+@keyframes blinkRed{0%,100%{opacity:1}50%{opacity:.5}}
+@keyframes rowBlinkGreen{0%,100%{background-color:rgba(40,200,64,.05)}50%{background-color:rgba(40,200,64,.15)}}
+@keyframes rowBlinkRed{0%,100%{background-color:rgba(255,95,87,.05)}50%{background-color:rgba(255,95,87,.15)}}
+.row-h{animation:rowBlinkGreen 1.5s infinite}
+.row-b{animation:rowBlinkRed 1.5s infinite}
 @media(max-width:600px){
   body{padding:.5rem}
   table{font-size:.75rem}
   th,td{padding:.3rem}
-  .paire h2{font-size:.95rem}
+  section h2{font-size:.95rem}
+  .cond{font-size:.65rem}
+  .conseil{font-size:.8rem}
 }

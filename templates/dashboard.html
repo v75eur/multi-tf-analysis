@@ -1,103 +1,55 @@
-<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Dashboard</title><link rel="stylesheet" href="/static/style.css"></head>
+<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Multi-TF</title><link rel="stylesheet" href="/static/style.css"></head>
 <body>
 <header>
 <h1>📊 Multi-TF Analysis</h1>
 <div>
 <span class="time">{{ now }}</span>
-<span class="countdown">🔄 <span id="countdown">5min 0s</span></span>
+<span class="countdown">🔄 <span id="countdown">5min</span></span>
 <a href="/logout" class="logout">🚪</a>
 </div>
 </header>
 <main>
 
-<section class="intro">
-<h2>📖 Comment lire ce dashboard</h2>
-<p>Analyse de <b>4 paires</b> sur <b>5 timeframes</b> (H4, H1, M30, M15, M5).</p>
-<ul>
-<li><b>Tendance</b> : régression linéaire sur 10 clôtures</li>
-<li><b>Acheteurs/Vendeurs</b> : % bougies vertes/rouges</li>
-<li><b>Agitation</b> : % chevauchements</li>
-<li><b>Divergence</b> : creux/sommets</li>
-<li><b>EMA 5 / EMA 25</b> : croisement confirmé à la clôture M5</li>
-<li><b>OHLC</b> : Open, High, Low, Close</li>
-</ul>
-<p class="conseil">💡 <b>Conseil :</b> le signal ACHAT/VENTE est basé sur H1 + M30 + M15 alignés + M5 croisement EMA. H4 est un bonus de confirmation.</p>
-</section>
-
 {% for pair, tfs in resultats.items() %}
 {% set c = conditions[pair] %}
-<section class="paire">
-<h2>💱 {{ pair }} <span class="conclusion {{ c.couleur }}">{{ c.signal }}</span>{% if c.bonus %} <span class="bonus">⭐ H4 confirmé</span>{% endif %}</h2>
+<section class="paire {% if c.signal == 'ACHAT' %}signal-achat{% elif c.signal == 'VENTE' %}signal-vente{% endif %}">
+<h2>
+<span>💱 {{ pair }}</span>
+<span class="signal-badge {{ c.couleur }}">{{ c.signal }}</span>
+{% if c.bonus %}<span class="bonus">⭐ H4</span>{% endif %}
+</h2>
 
-<div class="conditions-box">
-<h3>📋 Conditions ({{ c.signal }})</h3>
+<div class="conseil {{ c.couleur }}">{{ c.conseil }}</div>
+
+<div class="conditions-row">
 {% for k, v in c.details.items() %}
-<div class="cond-item {% if v %}cond-ok{% else %}cond-ko{% endif %}">
-<span>{{ '✅' if v else '❌' }} {{ k }}</span>
-</div>
+<span class="cond {% if v %}ok{% else %}ko{% endif %}">{{ '✅' if v else '❌' }} {{ k }}</span>
 {% endfor %}
-<p class="conseil">💡 
-{% if c.signal == "ACHAT" %}Toutes les conditions ACHAT sont remplies. Signal fiable.
-{% elif c.signal == "VENTE" %}Toutes les conditions VENTE sont remplies. Signal fiable.
-{% elif c.signal == "ATTENDRE" %}Certaines conditions manquent. Attends le prochain signal.
-{% else %}Données manquantes.{% endif %}
-</p>
 </div>
 
 <table>
-<thead><tr><th>TF</th><th>Tendance</th><th>Ach.</th><th>Ven.</th><th>Agit.</th><th>Div.</th><th>EMA5</th><th>EMA25</th><th>Signal</th></tr></thead>
+<thead><tr><th>TF</th><th>Tend.</th><th>Ach.</th><th>Ven.</th><th>Agit.</th><th>Div.</th><th>EMA5</th><th>EMA25</th><th>Sig.</th></tr></thead>
 <tbody>
 {% for tf in ["H4", "H1", "M30", "M15", "M5"] %}
 {% if tf in tfs %}
 {% set t = tfs[tf] %}
-<tr class="{% if t.tendance == 'haussier' %}row-haussier{% elif t.tendance == 'baissier' %}row-baissier{% endif %}">
+<tr class="{% if t.tendance == 'haussier' %}row-h{% elif t.tendance == 'baissier' %}row-b{% endif %}">
 <td><b>{{ t.tf }}</b></td>
 <td>{{ t.tendance }} <span class="pct">{{ t.pct_tendance }}%</span></td>
-<td>{{ t.pct_acheteurs }}%</td>
-<td>{{ t.pct_vendeurs }}%</td>
+<td class="vert">{{ t.pct_acheteurs }}%</td>
+<td class="rouge">{{ t.pct_vendeurs }}%</td>
 <td>{{ t.pct_agitation }}%</td>
 <td>{{ 'H' if t.divergence == 'haussiere' else 'B' if t.divergence == 'baissiere' else '—' }}</td>
-<td>{{ t.ema5 if t.ema5 else '—' }}</td>
-<td>{{ t.ema25 if t.ema25 else '—' }}</td>
+<td>{{ t.ema5 or '—' }}</td>
+<td>{{ t.ema25 or '—' }}</td>
 <td class="{% if t.ema_signal == 'haussier' %}vert{% elif t.ema_signal == 'baissier' %}rouge{% endif %}"><b>{{ t.ema_signal or '—' }}</b></td>
 </tr>
 {% endif %}
 {% endfor %}
 </tbody>
 </table>
-
-{% for tf in ["H4", "H1", "M30", "M15", "M5"] %}
-{% if tf in tfs %}
-{% set t = tfs[tf] %}
-<div class="ohlc-box">
-<h4>{{ t.tf }} — OHLC (10 dernières bougies)</h4>
-<table class="ohlc-table">
-<thead><tr><th>#</th><th>Open</th><th>High</th><th>Low</th><th>Close</th><th>Range</th><th>Corps</th></tr></thead>
-<tbody>
-{% for b in t.ohlc %}
-<tr>
-<td>{{ loop.index }}</td>
-<td>{{ b.o }}</td>
-<td class="vert">{{ b.h }}</td>
-<td class="rouge">{{ b.l }}</td>
-<td>{{ b.c }}</td>
-<td>{{ "%.5f"|format(b.h - b.l) }}</td>
-<td>{{ "%.5f"|format(b.c - b.o if b.c > b.o else b.o - b.c) }}</td>
-</tr>
-{% endfor %}
-</tbody>
-</table>
-</div>
-{% endif %}
-{% endfor %}
 </section>
 {% endfor %}
-
-<section class="intro">
-<h2>⚠️ Avertissement</h2>
-<p>Ce dashboard est un <b>outil d'aide à la décision</b>. Il ne remplace pas l'analyse humaine.</p>
-<p class="conseil">💡 <b>Conseil final :</b> la patience est la clé. Un bon trade vaut mieux que 10 mauvais.</p>
-</section>
 
 </main>
 <script>

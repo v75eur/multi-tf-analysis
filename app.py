@@ -19,14 +19,11 @@ TIMEFRAMES = {
     "M5": ("5m", "5d", 300)
 }
 PERIODE = 10
-LARGEUR_PIVOT = 3
-FENETRE_CREUX = 50
 EMA_COURT = 5
 EMA_LONG = 25
 DERIV_WS = "wss://api.derivws.com/trading/v1/options/ws/public"
-
-_cache_yahoo = {}
 CACHE_YAHOO_SEC = 15 * 60
+_cache_yahoo = {}
 
 def logged(): return session.get("admin") is True
 
@@ -152,15 +149,12 @@ def analyser(tf, bougies):
     sommets = trouver_sommets(bougies)
     divergence = calc_divergence(bougies, creux, sommets)
     ema5, ema25, ema_sig = calc_ema_signal(clotures)
-    dernieres = bougies[-PERIODE:]
-    ohlc = [{"o": round(b["open"],5), "h": round(b["high"],5), "l": round(b["low"],5), "c": round(b["close"],5)} for b in dernieres]
     return {
         "tf": tf, "tendance": tendance, "pct_tendance": pct_tendance,
-        "vertes": v, "rouges": r, "pct_acheteurs": pa, "pct_vendeurs": pv,
-        "chevauchements": c, "pct_agitation": ag,
+        "pct_acheteurs": pa, "pct_vendeurs": pv,
+        "pct_agitation": ag,
         "divergence": divergence,
         "ema5": ema5, "ema25": ema25, "ema_signal": ema_sig,
-        "ohlc": ohlc,
         "prix": clotures[-1]
     }
 
@@ -176,58 +170,57 @@ def analyser_paire(pair, source):
     return resultats
 
 def conditions_paire(tfs):
-    """Vérifie les conditions ACHAT/VENTE."""
     if not all(k in tfs for k in ["H1", "M30", "M15", "M5"]):
-        return {"signal": "DONNEES MANQUANTES", "couleur": "jaune", "details": {}}
-
+        return {"signal": "?", "couleur": "jaune", "conseil": "Données manquantes", "details": {}}
     h1, m30, m15, m5 = tfs["H1"], tfs["M30"], tfs["M15"], tfs["M5"]
     h4 = tfs.get("H4")
-
     details = {}
+    cond1 = all(t["tendance"] == "haussier" for t in [h1, m30, m15])
+    cond2 = all(t["pct_acheteurs"] > t["pct_vendeurs"] for t in [h1, m30, m15])
+    cond3 = m5["ema_signal"] == "haussier"
+    details["H1 ↑"] = h1["tendance"] == "haussier"
+    details["M30 ↑"] = m30["tendance"] == "haussier"
+    details["M15 ↑"] = m15["tendance"] == "haussier"
+    details["Ach>Ven H1"] = h1["pct_acheteurs"] > h1["pct_vendeurs"]
+    details["Ach>Ven M30"] = m30["pct_acheteurs"] > m30["pct_vendeurs"]
+    details["Ach>Ven M15"] = m15["pct_acheteurs"] > m15["pct_vendeurs"]
+    details["M5 EMA↑"] = cond3
+    bonus = h4 and h4["tendance"] == "haussier" if h4 else False
+    details["H4 ↑"] = bonus
 
-    # ACHAT
-    cond1_hausse = all(t["tendance"] == "haussier" for t in [h1, m30, m15])
-    cond2_ach = all(t["pct_acheteurs"] > t["pct_vendeurs"] for t in [h1, m30, m15])
-    cond3_m5 = m5["ema_signal"] == "haussier"
+    if cond1 and cond2 and cond3:
+        conseil = "✅ Signal ACHAT fiable. Entre à la clôture M5."
+        if bonus: conseil = "⭐ Signal ACHAT FORT (H4 confirme). Entre à la clôture M5."
+        return {"signal": "ACHAT", "couleur": "vert", "bonus": bonus, "conseil": conseil, "details": details}
 
-    details["H1 Haussier"] = h1["tendance"] == "haussier"
-    details["M30 Haussier"] = m30["tendance"] == "haussier"
-    details["M15 Haussier"] = m15["tendance"] == "haussier"
-    details["Acheteurs > Vendeurs (H1)"] = h1["pct_acheteurs"] > h1["pct_vendeurs"]
-    details["Acheteurs > Vendeurs (M30)"] = m30["pct_acheteurs"] > m30["pct_vendeurs"]
-    details["Acheteurs > Vendeurs (M15)"] = m15["pct_acheteurs"] > m15["pct_vendeurs"]
-    details["M5 EMA5 > EMA25"] = cond3_m5
+    cond1b = all(t["tendance"] == "baissier" for t in [h1, m30, m15])
+    cond2b = all(t["pct_vendeurs"] > t["pct_acheteurs"] for t in [h1, m30, m15])
+    cond3b = m5["ema_signal"] == "baissier"
+    details2 = {
+        "H1 ↓": h1["tendance"] == "baissier",
+        "M30 ↓": m30["tendance"] == "baissier",
+        "M15 ↓": m15["tendance"] == "baissier",
+        "Ven>Ach H1": h1["pct_vendeurs"] > h1["pct_acheteurs"],
+        "Ven>Ach M30": m30["pct_vendeurs"] > m30["pct_acheteurs"],
+        "Ven>Ach M15": m15["pct_vendeurs"] > m15["pct_acheteurs"],
+        "M5 EMA↓": cond3b,
+    }
+    bonus2 = h4 and h4["tendance"] == "baissier" if h4 else False
+    details2["H4 ↓"] = bonus2
 
-    bonus_h4 = h4 and h4["tendance"] == "haussier" if h4 else False
-    details["H4 Haussier (bonus)"] = bonus_h4
+    if cond1b and cond2b and cond3b:
+        conseil = "✅ Signal VENTE fiable. Entre à la clôture M5."
+        if bonus2: conseil = "⭐ Signal VENTE FORT (H4 confirme). Entre à la clôture M5."
+        return {"signal": "VENTE", "couleur": "rouge", "bonus": bonus2, "conseil": conseil, "details": details2}
 
-    if cond1_hausse and cond2_ach and cond3_m5:
-        return {"signal": "ACHAT", "couleur": "vert", "bonus": bonus_h4, "details": details}
-
-    # VENTE
-    cond1_baisse = all(t["tendance"] == "baissier" for t in [h1, m30, m15])
-    cond2_ven = all(t["pct_vendeurs"] > t["pct_acheteurs"] for t in [h1, m30, m15])
-    cond3_m5_b = m5["ema_signal"] == "baissier"
-
-    details["H1 Baissier"] = h1["tendance"] == "baissier"
-    details["M30 Baissier"] = m30["tendance"] == "baissier"
-    details["M15 Baissier"] = m15["tendance"] == "baissier"
-    details["Vendeurs > Acheteurs (H1)"] = h1["pct_vendeurs"] > h1["pct_acheteurs"]
-    details["Vendeurs > Acheteurs (M30)"] = m30["pct_vendeurs"] > m30["pct_acheteurs"]
-    details["Vendeurs > Acheteurs (M15)"] = m15["pct_vendeurs"] > m15["pct_acheteurs"]
-    details["M5 EMA5 < EMA25"] = cond3_m5_b
-
-    bonus_h4_b = h4 and h4["tendance"] == "baissier" if h4 else False
-    details["H4 Baissier (bonus)"] = bonus_h4_b
-
-    if cond1_baisse and cond2_ven and cond3_m5_b:
-        return {"signal": "VENTE", "couleur": "rouge", "bonus": bonus_h4_b, "details": details}
-
-    return {"signal": "ATTENDRE", "couleur": "jaune", "bonus": False, "details": details}
+    # Compte les conditions remplies
+    ok = sum(1 for v in details.values() if v)
+    total = len(details)
+    conseil = f"⏸️ Attendre. {ok}/{total} conditions remplies."
+    return {"signal": "ATTENDRE", "couleur": "jaune", "bonus": False, "conseil": conseil, "details": details}
 
 def analyser_tout():
-    res = {}
-    conds = {}
+    res, conds = {}, {}
     for pair in YAHOO_PAIRS:
         res[pair] = analyser_paire(pair, "yahoo")
         conds[pair] = conditions_paire(res[pair])
@@ -261,6 +254,11 @@ def dashboard():
 
 @app.route("/ping")
 def ping(): return "ok", 200
+
+@app.route("/cron")
+def cron():
+    analyser_tout()
+    return "ok", 200
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
