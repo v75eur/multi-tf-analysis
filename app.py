@@ -11,12 +11,18 @@ ADMIN_HASH = os.getenv("ADMIN_HASH", "d0695d2f4b6487fb81c7047ba01d06d5065aa1a9f1
 
 YAHOO_PAIRS = {"EURUSD": "EURUSD=X", "GBPUSD": "GBPUSD=X", "XAUUSD": "GC=F"}
 DERIV_PAIRS = {"V75": "R_75"}
-TIMEFRAMES = {"H1": ("1h", "60d", 3600), "M30": ("30m", "30d", 1800), "M15": ("15m", "15d", 900), "M5": ("5m", "5d", 300)}
+TIMEFRAMES = {
+    "H4": ("1h", "60d", 14400),
+    "H1": ("1h", "60d", 3600),
+    "M30": ("30m", "30d", 1800),
+    "M15": ("15m", "15d", 900),
+    "M5": ("5m", "5d", 300)
+}
 PERIODE = 10
 LARGEUR_PIVOT = 3
 FENETRE_CREUX = 50
-SMA_COURT = 5
-SMA_LONG = 25
+EMA_COURT = 5
+EMA_LONG = 25
 DERIV_WS = "wss://api.derivws.com/trading/v1/options/ws/public"
 
 _cache_yahoo = {}
@@ -60,17 +66,22 @@ def recuperer_bougies_yahoo(symbol, interval, range_):
         print(f"Yahoo {symbol}: {e}")
         return []
 
-def calc_sma(clotures, periode):
+def calc_ema(clotures, periode):
     if len(clotures) < periode: return None
-    return round(np.mean(clotures[-periode:]), 5)
+    k = 2 / (periode + 1)
+    ema = np.mean(clotures[:periode])
+    for c in clotures[periode:]:
+        ema = c * k + ema * (1 - k)
+    return round(ema, 5)
 
-def calc_sma_signal(clotures):
-    sma5 = calc_sma(clotures, SMA_COURT)
-    sma25 = calc_sma(clotures, SMA_LONG)
-    if sma5 is None or sma25 is None: return None
-    if sma5 > sma25: return "haussier"
-    if sma5 < sma25: return "baissier"
-    return "neutre"
+def calc_ema_signal(clotures):
+    ema5 = calc_ema(clotures, EMA_COURT)
+    ema25 = calc_ema(clotures, EMA_LONG)
+    if ema5 is None or ema25 is None: return None, None, None
+    if ema5 > ema25: sig = "haussier"
+    elif ema5 < ema25: sig = "baissier"
+    else: sig = "neutre"
+    return ema5, ema25, sig
 
 def calc_tendance(clotures):
     x = np.arange(1, len(clotures)+1)
@@ -131,18 +142,16 @@ def calc_divergence(bougies, creux, sommets):
     return "aucune"
 
 def analyser(tf, bougies):
-    if len(bougies) < 25: return None
-    clotures = [b["close"] for b in bougies[-PERIODE:]]
-    tendance, pct_tendance = calc_tendance(clotures)
+    if len(bougies) < 30: return None
+    clotures = [b["close"] for b in bougies]
+    clotures_10 = clotures[-PERIODE:]
+    tendance, pct_tendance = calc_tendance(clotures_10)
     v, r, pa, pv = calc_acheteurs(bougies)
     c, ag = calc_agitation(bougies)
     creux = trouver_creux(bougies)
     sommets = trouver_sommets(bougies)
     divergence = calc_divergence(bougies, creux, sommets)
-    all_clotures = [b["close"] for b in bougies]
-    sma5 = calc_sma(all_clotures, SMA_COURT)
-    sma25 = calc_sma(all_clotures, SMA_LONG)
-    sma_signal = calc_sma_signal(all_clotures)
+    ema5, ema25, ema_sig = calc_ema_signal(clotures)
     dernieres = bougies[-PERIODE:]
     ohlc = [{"o": round(b["open"],5), "h": round(b["high"],5), "l": round(b["low"],5), "c": round(b["close"],5)} for b in dernieres]
     return {
@@ -150,67 +159,82 @@ def analyser(tf, bougies):
         "vertes": v, "rouges": r, "pct_acheteurs": pa, "pct_vendeurs": pv,
         "chevauchements": c, "pct_agitation": ag,
         "divergence": divergence,
-        "sma5": sma5, "sma25": sma25, "sma_signal": sma_signal,
+        "ema5": ema5, "ema25": ema25, "ema_signal": ema_sig,
         "ohlc": ohlc,
         "prix": clotures[-1]
     }
 
 def analyser_paire(pair, source):
-    resultats = []
+    resultats = {}
     for tf, (interval, range_, gran) in TIMEFRAMES.items():
         if source == "yahoo":
             bougies = recuperer_bougies_yahoo(YAHOO_PAIRS[pair], interval, range_)
         else:
             bougies = recuperer_bougies_deriv(DERIV_PAIRS[pair], gran, 100)
         r = analyser(tf, bougies)
-        if r: resultats.append(r)
+        if r: resultats[tf] = r
     return resultats
 
-def stats_paire(resultats):
-    if not resultats: return None
-    n = len(resultats)
-    pct_h = sum(1 for r in resultats if r["tendance"] == "haussier") / n * 100
-    pct_b = sum(1 for r in resultats if r["tendance"] == "baissier") / n * 100
-    moy_ach = round(sum(r["pct_acheteurs"] for r in resultats) / n, 1)
-    moy_ven = round(sum(r["pct_vendeurs"] for r in resultats) / n, 1)
-    moy_agit = round(sum(r["pct_agitation"] for r in resultats) / n, 1)
-    moy_tend = round(sum(r["pct_tendance"] for r in resultats) / n, 1)
-    div_h = sum(1 for r in resultats if r["divergence"] == "haussiere")
-    div_b = sum(1 for r in resultats if r["divergence"] == "baissiere")
-    sma_h = sum(1 for r in resultats if r["sma_signal"] == "haussier")
-    sma_b = sum(1 for r in resultats if r["sma_signal"] == "baissier")
+def conditions_paire(tfs):
+    """Vérifie les conditions ACHAT/VENTE."""
+    if not all(k in tfs for k in ["H1", "M30", "M15", "M5"]):
+        return {"signal": "DONNEES MANQUANTES", "couleur": "jaune", "details": {}}
 
-    if pct_h > 60 and sma_h >= 3: conclusion, couleur = "HAUSSIER", "vert"
-    elif pct_b > 60 and sma_b >= 3: conclusion, couleur = "BAISSIER", "rouge"
-    else: conclusion, couleur = "NEUTRE", "jaune"
+    h1, m30, m15, m5 = tfs["H1"], tfs["M30"], tfs["M15"], tfs["M5"]
+    h4 = tfs.get("H4")
 
-    if moy_agit < 40: etat = "Propre"
-    elif moy_agit < 70: etat = "Normal"
-    else: etat = "Agite"
+    details = {}
 
-    if pct_h > 60 and moy_agit < 70 and sma_h >= 3: decision = "ACHAT possible"
-    elif pct_b > 60 and moy_agit < 70 and sma_b >= 3: decision = "VENTE possible"
-    else: decision = "ATTENDRE"
+    # ACHAT
+    cond1_hausse = all(t["tendance"] == "haussier" for t in [h1, m30, m15])
+    cond2_ach = all(t["pct_acheteurs"] > t["pct_vendeurs"] for t in [h1, m30, m15])
+    cond3_m5 = m5["ema_signal"] == "haussier"
 
-    return {
-        "pct_haussier": round(pct_h, 0), "pct_baissier": round(pct_b, 0),
-        "moy_acheteurs": moy_ach, "moy_vendeurs": moy_ven,
-        "moy_agitation": moy_agit, "moy_tendance": moy_tend,
-        "div_haussiere": div_h, "div_baissiere": div_b,
-        "sma_haussier": sma_h, "sma_baissier": sma_b,
-        "conclusion": conclusion, "couleur": couleur,
-        "etat": etat, "decision": decision, "n_tf": n
-    }
+    details["H1 Haussier"] = h1["tendance"] == "haussier"
+    details["M30 Haussier"] = m30["tendance"] == "haussier"
+    details["M15 Haussier"] = m15["tendance"] == "haussier"
+    details["Acheteurs > Vendeurs (H1)"] = h1["pct_acheteurs"] > h1["pct_vendeurs"]
+    details["Acheteurs > Vendeurs (M30)"] = m30["pct_acheteurs"] > m30["pct_vendeurs"]
+    details["Acheteurs > Vendeurs (M15)"] = m15["pct_acheteurs"] > m15["pct_vendeurs"]
+    details["M5 EMA5 > EMA25"] = cond3_m5
+
+    bonus_h4 = h4 and h4["tendance"] == "haussier" if h4 else False
+    details["H4 Haussier (bonus)"] = bonus_h4
+
+    if cond1_hausse and cond2_ach and cond3_m5:
+        return {"signal": "ACHAT", "couleur": "vert", "bonus": bonus_h4, "details": details}
+
+    # VENTE
+    cond1_baisse = all(t["tendance"] == "baissier" for t in [h1, m30, m15])
+    cond2_ven = all(t["pct_vendeurs"] > t["pct_acheteurs"] for t in [h1, m30, m15])
+    cond3_m5_b = m5["ema_signal"] == "baissier"
+
+    details["H1 Baissier"] = h1["tendance"] == "baissier"
+    details["M30 Baissier"] = m30["tendance"] == "baissier"
+    details["M15 Baissier"] = m15["tendance"] == "baissier"
+    details["Vendeurs > Acheteurs (H1)"] = h1["pct_vendeurs"] > h1["pct_acheteurs"]
+    details["Vendeurs > Acheteurs (M30)"] = m30["pct_vendeurs"] > m30["pct_acheteurs"]
+    details["Vendeurs > Acheteurs (M15)"] = m15["pct_vendeurs"] > m15["pct_acheteurs"]
+    details["M5 EMA5 < EMA25"] = cond3_m5_b
+
+    bonus_h4_b = h4 and h4["tendance"] == "baissier" if h4 else False
+    details["H4 Baissier (bonus)"] = bonus_h4_b
+
+    if cond1_baisse and cond2_ven and cond3_m5_b:
+        return {"signal": "VENTE", "couleur": "rouge", "bonus": bonus_h4_b, "details": details}
+
+    return {"signal": "ATTENDRE", "couleur": "jaune", "bonus": False, "details": details}
 
 def analyser_tout():
-    res, stats = {}, {}
+    res = {}
+    conds = {}
     for pair in YAHOO_PAIRS:
         res[pair] = analyser_paire(pair, "yahoo")
-        stats[pair] = stats_paire(res[pair])
+        conds[pair] = conditions_paire(res[pair])
     for pair in DERIV_PAIRS:
         res[pair] = analyser_paire(pair, "deriv")
-        stats[pair] = stats_paire(res[pair])
-    return res, stats
+        conds[pair] = conditions_paire(res[pair])
+    return res, conds
 
 @app.route("/")
 def index():
@@ -232,8 +256,8 @@ def logout():
 @app.route("/dashboard")
 def dashboard():
     if not logged(): return redirect(url_for("index"))
-    res, stats = analyser_tout()
-    return render_template("dashboard.html", resultats=res, stats=stats, now=datetime.now().strftime("%H:%M"))
+    res, conds = analyser_tout()
+    return render_template("dashboard.html", resultats=res, conditions=conds, now=datetime.now().strftime("%H:%M"))
 
 @app.route("/ping")
 def ping(): return "ok", 200
