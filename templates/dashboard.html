@@ -1,0 +1,39 @@
+<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Dashboard</title><link rel="stylesheet" href="/static/style.css"></head>
+<body>
+<header><h1>📊 Multi-TF Analysis</h1><div><span class="time">{{ now }}</span> <a href="/logout" class="logout">🚪</a></div></header>
+<main>
+{% for pair, tfs in resultats.items() %}
+{% set s = stats[pair] %}
+<section class="paire">
+<h2>💱 {{ pair }} {% if s %}<span class="conclusion {{ s.couleur }}">{{ s.conclusion }}</span>{% endif %}</h2>
+{% if s %}
+<div class="stats-box">
+<div class="stat-item"><span class="lbl">Tendance</span><b>{{ s.moy_tendance }}%</b></div>
+<div class="stat-item"><span class="lbl">Acheteurs</span><b class="vert">{{ s.moy_acheteurs }}%</b></div>
+<div class="stat-item"><span class="lbl">Vendeurs</span><b class="rouge">{{ s.moy_vendeurs }}%</b></div>
+<div class="stat-item"><span class="lbl">Agitation</span><b>{{ s.moy_agitation }}%</b></div>
+<div class="stat-item"><span class="lbl">Div. H</span><b>{{ s.div_haussiere }}</b></div>
+<div class="stat-item"><span class="lbl">Div. B</span><b>{{ s.div_baissiere }}</b></div>
+<div class="stat-item large"><span class="lbl">Etat</span><b>{{ s.etat }}</b></div>
+<div class="stat-item large"><span class="lbl">Decision</span><b class="decision {{ s.couleur }}">{{ s.decision }}</b></div>
+</div>
+{% endif %}
+<table>
+<thead><tr><th>TF</th><th>Tendance</th><th>Ach.</th><th>Ven.</th><th>Agit.</th><th>Div.</th></tr></thead>
+<tbody>
+{% for t in tfs %}
+<tr class="{% if t.tendance == 'haussier' %}row-haussier{% elif t.tendance == 'baissier' %}row-baissier{% endif %}">
+<td><b>{{ t.tf }}</b></td>
+<td>{{ t.tendance }} <span class="pct">{{ t.pct_tendance }}%</span></td>
+<td>{{ t.pct_acheteurs }}%</td>
+<td>{{ t.pct_vendeurs }}%</td>
+<td>{{ t.pct_agitation }}%</td>
+<td>{{ 'H' if t.divergence == 'haussiere' else 'B' if t.divergence == 'baissiere' else '—' }}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+</section>
+{% endfor %}
+</main>
+</body></html>
