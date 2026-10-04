@@ -32,12 +32,34 @@ DERIV_WS = "wss://api.derivws.com/trading/v1/options/ws/public"
 CACHE_SEC = {"1h": 300, "30m": 180, "15m": 120, "5m": 60}
 _cache_yahoo = {}
 
-# ───────────── PONDÉRATION DES TIMEFRAMES ─────────────
-# Les petits TF pèsent plus lourd (mouvement récent = ce qui compte maintenant).
-# M5 = 5, M15 = 4, M30 = 3, H1 = 2, H4 = 1
+# Pondération : petits TF plus lourds (mouvement récent)
 POIDS_TF = {"M5": 5, "M15": 4, "M30": 3, "H1": 2, "H4": 1}
-# Ordre du plus petit au plus grand (pour l'alignement progressif)
 ORDRE_TF = ["M5", "M15", "M30", "H1", "H4"]
+
+# ───────────── SESSIONS DE TRADING (heure du Bénin) ─────────────
+# Asie 01h-09h : éviter (peu de volume sur EURUSD/GBPUSD)
+# Londres 09h-18h : optimale pour EURUSD/GBPUSD
+# New York 15h-23h : optimale pour XAUUSD
+# Chevauchement Londres/NY 15h-18h : meilleure fenêtre
+SESSIONS = {
+    "asie":     {"debut": 1,  "fin": 9,  "qualite": "faible",  "txt": "Asie (peu de volume, signaux peu fiables)"},
+    "londres":  {"debut": 9,  "fin": 18, "qualite": "forte",   "txt": "Londres (session active, bonne fiabilité)"},
+    "newyork":  {"debut": 15, "fin": 23, "qualite": "forte",   "txt": "New York (session active, bonne fiabilité)"},
+    "nuit":     {"debut": 23, "fin": 1,  "qualite": "faible",  "txt": "Nuit (marché calme)"},
+}
+
+# Corrélations connues (si deux paires bougent ensemble)
+CORRELATIONS = {
+    "EURUSD": ["GBPUSD"],   # EUR et GBP très corrélés
+    "GBPUSD": ["EURUSD"],
+    "XAUUSD": [],           # Or souvent inverse du dollar
+    "V75": [],
+}
+
+# Seuils de fiabilité
+SEUIL_VOLATILITE_MIN = 0.05   # % mouvement moyen H1 minimum (sinon marché plat)
+SEUIL_AGITATION_MAX = 70      # % agitation max (sinon marché trop indécis)
+DUREE_SIGNAL_MIN = 30         # minutes avant qu'un nouveau signal identique soit valide
 
 
 def logged():
@@ -114,7 +136,7 @@ def bougies_fermees(bougies, gran):
     return bougies
 
 
-# ───────────── CALCULS (bougies uniquement) ─────────────
+# ───────────── CALCULS ─────────────
 
 def calc_ema_serie(clotures, periode):
     if len(clotures) < periode:
@@ -301,17 +323,11 @@ def analyser(tf, bougies):
     }
 
 
-# ───────────── CALCULATEUR DE TENDANCE GÉNÉRALE (NOUVEAU) ─────────────
+# ───────────── TENDANCE GÉNÉRALE ─────────────
 
 def calc_tendance_generale(tfs):
-    """Combine tous les timeframes avec une pondération.
-    Les petits TF pèsent plus lourd (mouvement récent).
-    Retourne : % acheteurs général, % vendeurs général, tendance globale,
-    force, alignement progressif, et confirmation M5."""
     if not tfs:
         return None
-
-    # ── 1. Pourcentage acheteurs/vendeurs pondéré ──
     poids_total = 0
     somme_ach = 0.0
     somme_ven = 0.0
@@ -325,7 +341,6 @@ def calc_tendance_generale(tfs):
     ach_gen = round(somme_ach / poids_total, 1)
     ven_gen = round(somme_ven / poids_total, 1)
 
-    # ── 2. Score de tendance pondéré (chaque TF vote -1, 0, +1) ──
     score = 0
     score_max = 0
     for tf, data in tfs.items():
@@ -335,28 +350,19 @@ def calc_tendance_generale(tfs):
             score += p
         elif data["tendance"] == "baissier":
             score -= p
-    # Score normalisé entre -100 et +100
     score_pct = round(score / score_max * 100, 1) if score_max else 0.0
 
-    # ── 3. Conclusion de tendance générale ──
     if score_pct >= 60:
-        tendance = "ACHAT FORT"
-        couleur = "vert"
+        tendance, couleur = "ACHAT FORT", "vert"
     elif score_pct >= 25:
-        tendance = "ACHAT"
-        couleur = "vert"
+        tendance, couleur = "ACHAT", "vert"
     elif score_pct <= -60:
-        tendance = "VENTE FORTE"
-        couleur = "rouge"
+        tendance, couleur = "VENTE FORTE", "rouge"
     elif score_pct <= -25:
-        tendance = "VENTE"
-        couleur = "rouge"
+        tendance, couleur = "VENTE", "rouge"
     else:
-        tendance = "NEUTRE"
-        couleur = ""
+        tendance, couleur = "NEUTRE", ""
 
-    # ── 4. Alignement progressif du plus petit au plus grand ──
-    # On regarde M5 → M15 → M30 → H1 : combien de TF consécutifs alignés ?
     alignement = {"haussier": 0, "baissier": 0, "detail": []}
     for sens in ("haussier", "baissier"):
         compte = 0
@@ -368,25 +374,17 @@ def calc_tendance_generale(tfs):
             else:
                 break
         alignement[sens] = compte
-
-    # Détail visuel : liste des TF avec leur sens
     for tf in ORDRE_TF:
         if tf in tfs:
             alignement["detail"].append({"tf": tf, "sens": tfs[tf]["tendance"]})
 
-    # Le meilleur alignement progressif
     if alignement["haussier"] >= alignement["baissier"] and alignement["haussier"] > 0:
-        align_sens = "haussier"
-        align_n = alignement["haussier"]
+        align_sens, align_n = "haussier", alignement["haussier"]
     elif alignement["baissier"] > 0:
-        align_sens = "baissier"
-        align_n = alignement["baissier"]
+        align_sens, align_n = "baissier", alignement["baissier"]
     else:
-        align_sens = None
-        align_n = 0
+        align_sens, align_n = None, 0
 
-    # ── 5. Confirmation M5 après clôture (croisement EMA récent) ──
-    # Si M15+M30+H1 alignés ET EMA M5 croisée dans le même sens après clôture
     confirmation = None
     trois = ["M15", "M30", "H1"]
     if all(tf in tfs for tf in trois) and "M5" in tfs:
@@ -401,19 +399,167 @@ def calc_tendance_generale(tfs):
                                 "txt": "✅ M15+M30+H1 baissiers + croisement EMA M5 baissier récent (après clôture) → VENTE confirmée."}
 
     return {
-        "ach_gen": ach_gen,
-        "ven_gen": ven_gen,
-        "score_pct": score_pct,
-        "tendance": tendance,
-        "couleur": couleur,
-        "align_sens": align_sens,
-        "align_n": align_n,
+        "ach_gen": ach_gen, "ven_gen": ven_gen,
+        "score_pct": score_pct, "tendance": tendance, "couleur": couleur,
+        "align_sens": align_sens, "align_n": align_n,
         "align_detail": alignement["detail"],
         "confirmation": confirmation,
     }
 
 
-# ───────────── STATISTIQUES GÉNÉRALES PAR DEVISE ─────────────
+# ───────────── FILTRES DE FIABILITÉ (NOUVEAU) ─────────────
+
+def session_actuelle():
+    """Retourne la session en cours (heure du Bénin)."""
+    h = datetime.now(BENIN).hour
+    if 1 <= h < 9:
+        s = SESSIONS["asie"]
+    elif 9 <= h < 15:
+        s = SESSIONS["londres"]
+    elif 15 <= h < 18:
+        # Chevauchement Londres/NY = meilleure fenêtre
+        s = {"qualite": "excellente", "txt": "Chevauchement Londres + New York (meilleure fenêtre de la journée)"}
+    elif 18 <= h < 23:
+        s = SESSIONS["newyork"]
+    else:
+        s = SESSIONS["nuit"]
+    return {"heure": h, "qualite": s["qualite"], "txt": s["txt"]}
+
+
+def filtre_volatilite(tfs):
+    """Vérifie que le marché n'est pas plat."""
+    h1 = tfs.get("H1")
+    if not h1:
+        return {"ok": False, "txt": "Pas de données H1 pour évaluer la volatilité.", "cls": "jaune"}
+    mvt = mouvement_moyen([{"high": h1["prix"], "low": h1["prix"], "close": h1["prix"]}], 1)
+    # On prend le % de mouvement H1 depuis les stats
+    # Utilise directement le pct_tendance comme proxy + agitation
+    agitation = h1.get("pct_agitation", 0)
+    if agitation > SEUIL_AGITATION_MAX:
+        return {"ok": False, "cls": "jaune",
+                "txt": f"⚠️ Marché trop agité (agitation H1 = {agitation}%) : les bougies font des allers-retours, le signal est peu fiable. Attends un marché plus directionnel."}
+    return {"ok": True, "cls": "vert",
+            "txt": f"✅ Volatilité correcte (agitation H1 = {agitation}%)."}
+
+
+def filtre_tendance_superieure(tfs, sens_signal):
+    """Vérifie que H4 et H1 ne contredisent pas le signal.
+    Si H4 + H1 sont contraires au signal, c'est un pullback = piège."""
+    if not sens_signal or sens_signal not in ("haussier", "baissier"):
+        return {"ok": True, "cls": "", "txt": ""}
+    h4 = tfs.get("H4")
+    h1 = tfs.get("H1")
+    if not h4 or not h1:
+        return {"ok": True, "cls": "", "txt": "Pas assez de données H4/H1 pour vérifier la tendance supérieure."}
+
+    h4_sens = h4["tendance"]
+    h1_sens = h1["tendance"]
+    contre = "baissier" if sens_signal == "haussier" else "haussier"
+
+    if h4_sens == contre and h1_sens == contre:
+        return {"ok": False, "cls": "rouge",
+                "txt": f"🚫 H4 ET H1 sont {contre}s, ton signal est {sens_signal}. C'est un pullback dans une tendance inverse : NE PRENDS PAS ce trade, tu irais contre la tendance de fond."}
+    if h4_sens == contre:
+        return {"ok": False, "cls": "jaune",
+                "txt": f"⚠️ H4 est {contre} (contre ton signal {sens_signal}). Le signal peut être un simple rebond dans une tendance inverse. Réduis ton lot de moitié ou attends."}
+    if h1_sens == contre:
+        return {"ok": False, "cls": "jaune",
+                "txt": f"⚠️ H1 est {contre} (contre ton signal {sens_signal}). Attention, la tendance horaire n'est pas encore retournée. Attends que H1 confirme."}
+    return {"ok": True, "cls": "vert",
+            "txt": f"✅ H4 et H1 vont dans le sens du signal ({sens_signal}). Tu trades avec la tendance de fond."}
+
+
+def filtre_session():
+    """Vérifie qu'on est dans une bonne session de trading."""
+    s = session_actuelle()
+    if s["qualite"] == "excellente":
+        return {"ok": True, "cls": "vert", "txt": f"✅ {s['txt']}."}
+    if s["qualite"] == "forte":
+        return {"ok": True, "cls": "vert", "txt": f"✅ {s['txt']}."}
+    return {"ok": False, "cls": "jaune",
+            "txt": f"⚠️ {s['txt']}. Les signaux en dehors de Londres/New York sont souvent faux à cause du manque de volume. Évite de trader maintenant."}
+
+
+def filtre_duplication(pair, sens, historique):
+    """Vérifie qu'un signal identique n'a pas déjà été donné récemment."""
+    if not historique or not sens:
+        return {"ok": True, "cls": "", "txt": ""}
+    maintenant = time.time()
+    for h in reversed(historique):
+        if h["pair"] == pair and h["sens"] == sens:
+            age_min = (maintenant - h["t"]) / 60
+            if age_min < DUREE_SIGNAL_MIN:
+                return {"ok": False, "cls": "jaune",
+                        "txt": f"⚠️ Un signal {sens} identique sur {pair} a déjà été donné il y a {int(age_min)} min. Ce n'est probablement pas un nouveau signal, c'est le même mouvement. Attends au moins {DUREE_SIGNAL_MIN} min."}
+            break
+    return {"ok": True, "cls": "", "txt": ""}
+
+
+def filtre_correlation(pair, sens, autres_cond):
+    """Vérifie que deux paires corrélées n'ont pas le même signal en même temps."""
+    if not sens or sens not in ("ACHAT", "VENTE") or not autres_cond:
+        return {"ok": True, "cls": "", "txt": ""}
+    correlees = CORRELATIONS.get(pair, [])
+    if not correlees:
+        return {"ok": True, "cls": "", "txt": ""}
+    conflits = []
+    for c in correlees:
+        if c in autres_cond and autres_cond[c].get("signal") == sens:
+            conflits.append(c)
+    if conflits:
+        return {"ok": False, "cls": "jaune",
+                "txt": f"⚠️ {', '.join(conflits)} a aussi un signal {sens} en même temps. Ces paires sont corrélées : prendre les deux = doubler ton risque. Choisis-en une seule."}
+    return {"ok": True, "cls": "", "txt": ""}
+
+
+def filtre_global(tfs, cond_base, pair, sens_signal, historique, autres_cond):
+    """Applique tous les filtres et retourne un verdict global."""
+    filtres = []
+
+    # 1. Session
+    f_session = filtre_session()
+    filtres.append({"nom": "Session", **f_session})
+
+    # 2. Volatilité
+    f_vol = filtre_volatilite(tfs)
+    filtres.append({"nom": "Volatilité", **f_vol})
+
+    # 3. Tendance supérieure
+    if sens_signal:
+        f_tend = filtre_tendance_superieure(tfs, sens_signal)
+        filtres.append({"nom": "Tendance H4/H1", **f_tend})
+
+    # 4. Duplication
+    f_dup = filtre_duplication(pair, sens_signal, historique)
+    if f_dup["txt"]:
+        filtres.append({"nom": "Signal récent", **f_dup})
+
+    # 5. Corrélation
+    f_corr = filtre_correlation(pair, sens_signal, autres_cond)
+    if f_corr["txt"]:
+        filtres.append({"nom": "Corrélation", **f_corr})
+
+    # Verdict global
+    bloquants = [f for f in filtres if f["ok"] is False and f["cls"] == "rouge"]
+    avertissements = [f for f in filtres if f["ok"] is False and f["cls"] == "jaune"]
+
+    if bloquants:
+        verdict = "BLOQUÉ"
+        couleur = "rouge"
+        conseil = "🚫 NE PRENDS PAS ce trade. " + " ".join(f["txt"] for f in bloquants)
+    elif avertissements:
+        verdict = "PRUDENCE"
+        couleur = "jaune"
+        conseil = "⚠️ Trade possible mais risqué. " + " ".join(f["txt"] for f in avertissements)
+    else:
+        verdict = "FEU VERT"
+        couleur = "vert"
+        conseil = "✅ Tous les filtres sont au vert. Tu peux trader en respectant le guide."
+
+    return {"filtres": filtres, "verdict": verdict, "couleur": couleur, "conseil": conseil}
+
+
+# ───────────── STATISTIQUES GÉNÉRALES ─────────────
 
 def calc_stats(pair, h1, tfs):
     if len(h1) < 30:
@@ -704,7 +850,7 @@ def backtest(series, pair="", horizon=12, test=1000, max_trade=48):
     }
 
 
-# ───────────── FRAÎCHEUR DES DONNÉES ─────────────
+# ───────────── FRAÎCHEUR ─────────────
 
 def fraicheur(m5):
     if not m5:
@@ -828,7 +974,7 @@ def alertes_signal(cond, tfs, niv, sltp, bt, mm_h1):
 
 # ───────────── GUIDE DU TRADE ─────────────
 
-def construire_guide(pair, cond, tfs, sltp):
+def construire_guide(pair, cond, tfs, sltp, filtres=None):
     sig = cond["signal"]
     if sig not in ("ACHAT", "VENTE") or not sltp:
         return None
@@ -860,7 +1006,7 @@ def construire_guide(pair, cond, tfs, sltp):
 
 # ───────────── ANALYSE D'UNE PAIRE ─────────────
 
-def analyser_paire(pair, source):
+def analyser_paire(pair, source, historique=None, autres_cond=None):
     series, resultats = {}, {}
     for tf, (interval, range_, gran) in TIMEFRAMES.items():
         if source == "yahoo":
@@ -881,7 +1027,7 @@ def analyser_paire(pair, source):
     cond = conditions_paire(resultats, fr["etat"] == "ferme", generale)
     prix = fp(pair, resultats["M5"]["prix"]) if "M5" in resultats else "—"
 
-    niv = sltp = bt = heures = guide = None
+    niv = sltp = bt = heures = guide = filtres = None
     h1, m15 = series.get("H1", []), series.get("M15", [])
     if "M5" in resultats and len(h1) >= 30 and len(m15) >= 30:
         p = resultats["M5"]["prix"]
@@ -890,31 +1036,63 @@ def analyser_paire(pair, source):
         heures = calc_heures(h1)
         bt = backtest(series, pair)
         cond["alertes"] = alertes_signal(cond, resultats, niv, sltp, bt, mouvement_moyen(h1, 24))
-        guide = construire_guide(pair, cond, resultats, sltp)
+
+        # Filtres de fiabilité
+        sens_sig = None
+        if cond["signal"] == "ACHAT":
+            sens_sig = "haussier"
+        elif cond["signal"] == "VENTE":
+            sens_sig = "baissier"
+        filtres = filtre_global(resultats, cond, pair, sens_sig, historique or [], autres_cond or {})
+
+        guide = construire_guide(pair, cond, resultats, sltp, filtres)
 
     return {"tfs": resultats, "stats": stats, "fraicheur": fr, "cond": cond, "prix": prix,
             "niv": niv, "sltp": sltp, "bt": bt, "heures": heures, "guide": guide,
-            "generale": generale}
+            "generale": generale, "filtres": filtres}
 
 
-def analyser_securise(pair, source):
+def analyser_securise(pair, source, historique=None, autres_cond=None):
     try:
-        return analyser_paire(pair, source)
+        return analyser_paire(pair, source, historique, autres_cond)
     except Exception as e:
         print(f"Erreur {pair}: {e}")
         return {"tfs": {}, "stats": None,
                 "fraicheur": {"texte": "Erreur de chargement", "etat": "ferme"},
                 "cond": conditions_paire({}), "prix": "—",
                 "niv": None, "sltp": None, "bt": None, "heures": None, "guide": None,
-                "generale": None}
+                "generale": None, "filtres": None}
 
 
 def analyser_tout():
     taches = [(p, "yahoo") for p in YAHOO_PAIRS] + [(p, "deriv") for p in DERIV_PAIRS]
+
+    # Passe 1 : analyse brute (sans filtres croisés)
     res = {}
     with ThreadPoolExecutor(max_workers=4) as ex:
         for (pair, _), data in zip(taches, ex.map(lambda t: analyser_securise(*t), taches)):
             res[pair] = data
+
+    # Passe 2 : on recalcule les filtres avec les autres signaux connus
+    autres_cond = {p: res[p]["cond"] for p in res}
+    historique = session.get("historique", [])
+    for pair, source in taches:
+        try:
+            res[pair] = analyser_paire(pair, source, historique, autres_cond)
+        except Exception as e:
+            print(f"Erreur passe 2 {pair}: {e}")
+
+    # Mise à jour de l'historique
+    maintenant = time.time()
+    for pair, d in res.items():
+        cond = d["cond"]
+        if cond["signal"] in ("ACHAT", "VENTE"):
+            historique.append({"pair": pair, "sens": cond["signal"], "t": maintenant,
+                               "prix": d["prix"], "feu": d["guide"]["feu"] if d.get("guide") else "?"})
+    # Garde seulement les 50 derniers
+    historique = historique[-50:]
+    session["historique"] = historique
+
     return res
 
 
@@ -946,7 +1124,10 @@ def dashboard():
     if not logged():
         return redirect(url_for("index"))
     paires = analyser_tout()
-    return render_template("dashboard.html", paires=paires, now=datetime.now(BENIN).strftime("%H:%M"))
+    historique = session.get("historique", [])
+    session_act = session_actuelle()
+    return render_template("dashboard.html", paires=paires, now=datetime.now(BENIN).strftime("%H:%M"),
+                           historique=historique[-10:], session_act=session_act)
 
 
 @app.route("/ping")

@@ -18,6 +18,14 @@
 
 <main>
 
+{# ═════════ BANDEAU SESSION EN COURS ═════════ #}
+<div class="bandeau-session {{ 'vert' if session_act.qualite in ('forte','excellente') else 'jaune' }}">
+🕐 <b>Session en cours :</b> {{ session_act.txt }}
+{% if session_act.qualite == 'faible' %}
+— <span class="rouge">⚠️ Évite de trader maintenant, les signaux sont peu fiables.</span>
+{% endif %}
+</div>
+
 <div class="resume">
 {% for pair, d in paires.items() %}
 <a href="#{{ pair }}" class="chip {{ d.cond.couleur }}">
@@ -33,6 +41,7 @@
 {% set s = d.stats %}
 {% set tfs = d.tfs %}
 {% set gen = d.generale %}
+{% set fl = d.filtres %}
 <section id="{{ pair }}" data-signal="{{ c.signal }}" class="paire {% if c.signal == 'ACHAT' %}signal-achat{% elif c.signal == 'VENTE' %}signal-vente{% endif %}">
 
 <div class="tete">
@@ -50,7 +59,25 @@
 
 <div class="fraicheur {{ d.fraicheur.etat }}">{{ d.fraicheur.texte }}</div>
 
-{# ═════════ CALCULATEUR DE TENDANCE GÉNÉRALE (NOUVEAU) ═════════ #}
+{# ═════════ VERDICT DES FILTRES (NOUVEAU) ═════════ #}
+{% if fl %}
+<div class="verdict {{ fl.couleur }}">
+<div class="verdict-titre">
+🛡️ <b>Verdict global : {{ fl.verdict }}</b>
+</div>
+<div class="verdict-conseil">{{ fl.conseil }}</div>
+<div class="filtres-liste">
+{% for f in fl.filtres %}
+<div class="filtre-item {{ f.cls }}">
+<span class="filtre-nom">{{ f.nom }}</span>
+<span class="filtre-txt">{{ f.txt }}</span>
+</div>
+{% endfor %}
+</div>
+</div>
+{% endif %}
+
+{# ═════════ CALCULATEUR DE TENDANCE GÉNÉRALE ═════════ #}
 {% if gen %}
 <div class="general {{ gen.couleur }}">
 <div class="general-titre">
@@ -247,26 +274,52 @@ Score pondéré : <b class="{{ gen.couleur }}">{{ '%+.1f'|format(gen.score_pct) 
 </section>
 {% endfor %}
 
+{# ═════════ JOURNAL DE BORD (NOUVEAU) ═════════ #}
+{% if historique %}
+<details class="journal">
+<summary>📒 Journal de bord — 10 derniers signaux</summary>
+<table class="journal-table">
+<thead><tr><th>Heure</th><th>Paire</th><th>Signal</th><th>Prix</th><th>Guide</th></tr></thead>
+<tbody>
+{% for h in historique|reverse %}
+<tr>
+<td>{{ h.heure }}</td>
+<td><b>{{ h.pair }}</b></td>
+<td class="{{ 'vert' if h.sens == 'ACHAT' else 'rouge' }}">{{ h.sens }}</td>
+<td>{{ h.prix }}</td>
+<td>{% if h.feu == 'vert' %}✅ vert{% elif h.feu == 'orange' %}⏳ orange{% else %}—{% endif %}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+<div class="note">Ce journal liste les signaux détectés dans ta session. Il ne dit pas s'ils ont été gagnants — c'est à toi de noter tes trades dans un carnet séparé pour progresser.</div>
+</details>
+{% endif %}
+
 <details class="aide">
 <summary>ℹ️ Comment lire</summary>
 <ul>
-<li><b>🧮 Tendance générale pondérée</b> : combine tous les TF avec un poids. Les petits TF (M5×5, M15×4) pèsent plus lourd que les grands (M30×3, H1×2, H4×1), car ils reflètent le mouvement récent. Score +100% = tous haussiers, −100% = tous baissiers.</li>
-<li><b>Alignement progressif</b> : on regarde M5 → M15 → M30 → H1. Si les 4 sont dans le même sens, alors le mouvement est cohérent du plus petit au plus grand.</li>
+<li><b>🛡️ Verdict global</b> : combine tous les filtres (session, volatilité, tendance H4/H1, duplication, corrélation). Si c'est "BLOQUÉ" en rouge, ne prends pas le trade même si le signal est vert. Si c'est "PRUDENCE" en jaune, réduis ton lot ou attends. Si c'est "FEU VERT", alors tu peux trader.</li>
+<li><b>Session</b> : les meilleures heures sont le chevauchement Londres+New York (15h-18h heure du Bénin) et Londres seul (9h-15h). En Asie (1h-9h) et la nuit, les signaux sont peu fiables.</li>
+<li><b>Tendance H4/H1</b> : si H4 ET H1 sont contre ton signal, c'est un pullback (piège) → BLOQUÉ. Si un seul est contre → PRUDENCE, réduis ton lot.</li>
+<li><b>Signal récent</b> : si le même signal a été donné il y a moins de 30 min, ce n'est pas un nouveau signal, c'est le même mouvement.</li>
+<li><b>Corrélation</b> : EURUSD et GBPUSD bougent souvent ensemble. Prendre les deux = doubler ton risque.</li>
+<li><b>🧮 Tendance générale pondérée</b> : combine tous les TF avec un poids. Les petits TF (M5×5, M15×4) pèsent plus lourd que les grands (M30×3, H1×2, H4×1), car ils reflètent le mouvement récent.</li>
+<li><b>Alignement progressif</b> : on regarde M5 → M15 → M30 → H1. Si les 4 sont dans le même sens, alors le mouvement est cohérent.</li>
 <li><b>Confirmation</b> : si M15+M30+H1 alignés ET croisement EMA M5 récent (≤3 bougies) après clôture dans le même sens, alors ACHAT ou VENTE confirmé.</li>
 <li>Signal « détecté » : les timeframes vont dans le même sens. Ce n'est pas une garantie que le prix continue.</li>
-<li>Si le guide est vert, alors les alertes jaunes sont absentes. Si le guide est orange, alors lis les raisons et attends.</li>
 <li>Ach. / Ven. = % de bougies vertes / rouges sur les 10 dernières.</li>
 <li>Agit. = part du mouvement perdue en allers-retours. Si c'est haut, alors le marché est indécis.</li>
 <li>Div. : H = divergence haussière, B = divergence baissière, — = aucune.</li>
-<li>« N bg » = nombre de bougies depuis le croisement EMA ou la cassure. Si N est grand, alors l'entrée est tardive.</li>
-<li>Cassure : le prix a fermé au-dessus du plus haut (↑) ou sous le plus bas (↓) des 20 bougies d'avant. Elle peut être fausse.</li>
-<li>Mèche basse : les vendeurs ont essayé de pousser et ont échoué. Mèche haute : l'inverse. Ce sont des indices, pas des preuves.</li>
-<li>Englobante : la dernière bougie avale entièrement la précédente (possible retournement).</li>
+<li>« N bg » = nombre de bougies depuis le croisement EMA ou la cassure.</li>
+<li>Cassure : le prix a fermé au-dessus du plus haut (↑) ou sous le plus bas (↓) des 20 bougies d'avant.</li>
+<li>Mèche basse : les vendeurs ont essayé de pousser et ont échoué. Mèche haute : l'inverse.</li>
+<li>Englobante : la dernière bougie avale entièrement la précédente.</li>
 <li>Grande ×N : la bougie est N fois plus grande que la moyenne. Si N ≥ 2, alors attends.</li>
-<li>Stop : sous le dernier creux (achat) ou au-dessus du dernier sommet (vente). Si le ratio est sous 1,5, alors le trade ne vaut pas le coup.</li>
-<li>Lot : calculé pour un compte en dollars (EURUSD, GBPUSD, or). Vérifie avec le calculateur de ta plateforme avant d'entrer. Pour V75, le lot n'est pas calculé.</li>
-<li>Test sur le passé : c'est une indication, pas une garantie. Si le nombre de trades est petit, alors le résultat n'est pas sûr. Le spread n'est pas compté.</li>
-<li>🔔 Son : si tu l'actives, alors un bip et une vibration t'avertissent d'un nouveau signal tant que la page reste ouverte. Si l'écran du téléphone est verrouillé, alors rien ne sonne.</li>
+<li>Stop : sous le dernier creux (achat) ou au-dessus du dernier sommet (vente). Si le ratio est sous 1,5, le trade ne vaut pas le coup.</li>
+<li>Lot : calculé pour un compte en dollars (EURUSD, GBPUSD, or). Vérifie avec le calculateur de ta plateforme. Pour V75, le lot n'est pas calculé.</li>
+<li>Test sur le passé : c'est une indication, pas une garantie. Le spread n'est pas compté.</li>
+<li>🔔 Son : si tu l'actives, alors un bip t'avertit d'un nouveau signal tant que la page reste ouverte.</li>
 <li>Toutes les bougies en cours sont ignorées : seules les bougies clôturées comptent.</li>
 </ul>
 </details>

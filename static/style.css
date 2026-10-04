@@ -21,6 +21,10 @@ main{max-width:1200px;margin:0 auto}
 .compte input{width:130px;padding:.45rem .6rem;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:8px;color:#fff;font-size:.9rem}
 .compte small{font-size:.65rem;color:var(--muted);flex:1;min-width:140px}
 
+.bandeau-session{background:var(--card);border-radius:12px;padding:.6rem 1rem;margin-bottom:1rem;font-size:.82rem;border-left:4px solid var(--yellow)}
+.bandeau-session.vert{border-left-color:var(--green);color:#a0e8a8}
+.bandeau-session.jaune{border-left-color:var(--yellow);color:#f0d590}
+
 .resume{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:.5rem;margin-bottom:1rem}
 .chip{display:flex;flex-direction:column;gap:.1rem;background:var(--card);border-radius:10px;padding:.6rem .8rem;text-decoration:none;color:#fff;border-left:4px solid var(--yellow)}
 .chip b{font-size:.85rem}
@@ -53,7 +57,25 @@ section h2{color:var(--cyan);font-size:1.1rem}
 .fraicheur.warn{color:var(--yellow)}
 .fraicheur.ferme{color:#9aa0b4}
 
-/* ═════ CALCULATEUR DE TENDANCE GÉNÉRALE (NOUVEAU) ═════ */
+/* ═════ VERDICT DES FILTRES ═════ */
+.verdict{border-radius:12px;padding:.8rem .9rem;margin:.4rem 0 .7rem;border:2px solid rgba(255,255,255,.08);background:var(--card2)}
+.verdict.vert{border-color:var(--green)}
+.verdict.jaune{border-color:var(--yellow)}
+.verdict.rouge{border-color:var(--red)}
+.verdict-titre{font-size:.95rem;margin-bottom:.4rem}
+.verdict.vert .verdict-titre{color:var(--green)}
+.verdict.jaune .verdict-titre{color:var(--yellow)}
+.verdict.rouge .verdict-titre{color:var(--red)}
+.verdict-conseil{font-size:.85rem;line-height:1.5;margin-bottom:.5rem;padding:.4rem .6rem;background:rgba(0,0,0,.15);border-radius:6px}
+.filtres-liste{display:flex;flex-direction:column;gap:.3rem}
+.filtre-item{display:flex;gap:.5rem;font-size:.76rem;line-height:1.4;padding:.35rem .5rem;border-radius:6px;background:rgba(255,255,255,.03)}
+.filtre-item.vert{background:rgba(40,200,64,.06)}
+.filtre-item.jaune{background:rgba(255,189,46,.06)}
+.filtre-item.rouge{background:rgba(255,95,87,.08)}
+.filtre-nom{font-weight:700;color:var(--cyan);min-width:110px;flex-shrink:0}
+.filtre-txt{flex:1}
+
+/* ═════ CALCULATEUR DE TENDANCE GÉNÉRALE ═════ */
 .general{background:var(--card2);border-radius:12px;padding:.8rem .9rem;margin:.4rem 0 .7rem;border:2px solid rgba(255,255,255,.08)}
 .general.vert{border-color:var(--green)}
 .general.rouge{border-color:var(--red)}
@@ -146,6 +168,13 @@ td{padding:.4rem;border-bottom:1px solid rgba(255,255,255,.05);white-space:nowra
 .tag.rouge{background:rgba(255,95,87,.15)}
 .tag.jaune{background:rgba(255,189,46,.15)}
 
+.journal{background:var(--card);border-radius:12px;padding:.8rem 1rem;font-size:.8rem;margin-bottom:1rem}
+.journal summary{cursor:pointer;color:var(--cyan);font-weight:600}
+.journal-table{margin-top:.6rem;font-size:.78rem;min-width:auto;width:100%}
+.journal-table th{font-size:.65rem;padding:.3rem}
+.journal-table td{padding:.3rem;border-bottom:1px solid rgba(255,255,255,.05)}
+.journal .note{margin-top:.6rem}
+
 @keyframes blinkGreen{0%,100%{opacity:1}50%{opacity:.5}}
 @keyframes blinkRed{0%,100%{opacity:1}50%{opacity:.5}}
 @keyframes rowBlinkGreen{0%,100%{background-color:rgba(40,200,64,.05)}50%{background-color:rgba(40,200,64,.15)}}
@@ -168,4 +197,6 @@ td{padding:.4rem;border-bottom:1px solid rgba(255,255,255,.05);white-space:nowra
   .compte input{width:110px}
   .align-chaine{gap:.2rem}
   .align-item{font-size:.7rem;padding:.2rem .5rem}
+  .filtre-nom{min-width:80px;font-size:.68rem}
+  .filtre-txt{font-size:.7rem}
 }
