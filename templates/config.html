@@ -1,0 +1,113 @@
+<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Config</title><link rel="stylesheet" href="/static/style.css"></head>
+<body>
+<header>
+<h1>⚙️ Configuration</h1>
+<div>
+<span class="time">{{ now }}</span>
+<a href="/dashboard" class="logout">📊 Dashboard</a>
+<a href="/logout" class="logout">🚪</a>
+</div>
+</header>
+<main>
+{% if message %}
+<div class="alerte {{ 'vert' if message[0] == 'ok' else 'rouge' }}">{{ message[1] }}</div>
+{% endif %}
+
+<form method="POST" action="/config">
+
+<section class="cfg">
+<h2>📊 Indicateurs</h2>
+<div class="cfg-grid">
+<label>EMA court<input type="number" name="ema_court" value="{{ config.ema_court }}" min="2" max="50" step="1"></label>
+<label>EMA long<input type="number" name="ema_long" value="{{ config.ema_long }}" min="5" max="200" step="1"></label>
+<label>Période tendance<input type="number" name="periode_tendance" value="{{ config.periode_tendance }}" min="3" max="50" step="1"></label>
+<label>Ratio min<input type="number" name="ratio_min" value="{{ config.ratio_min }}" min="0.5" max="10" step="0.1"></label>
+</div>
+</section>
+
+<section class="cfg">
+<h2>🎯 Timing d'entrée</h2>
+<div class="cfg-grid">
+<label>Frais jusqu'à (bougies)<input type="number" name="timing_frais_max" value="{{ config.timing_frais_max }}" min="1" max="20" step="1"></label>
+<label>En cours jusqu'à (bougies)<input type="number" name="timing_moyen_max" value="{{ config.timing_moyen_max }}" min="2" max="40" step="1"></label>
+<label>Agitation max (%)<input type="number" name="seuil_agitation_max" value="{{ config.seuil_agitation_max }}" min="30" max="100" step="1"></label>
+</div>
+</section>
+
+<section class="cfg">
+<h2>⚖️ Pondération des timeframes</h2>
+<p class="aide-cfg">Les petits TF pèsent plus lourd (mouvement récent).</p>
+<div class="cfg-grid">
+{% for tf in ['M5', 'M15', 'M30', 'H1', 'H4'] %}
+<label>{{ tf }}<input type="number" name="poids_{{ tf }}" value="{{ config.poids_tf[tf] }}" min="0" max="10" step="1"></label>
+{% endfor %}
+</div>
+</section>
+
+<section class="cfg">
+<h2>🕐 Sessions (heure du Bénin)</h2>
+{% for code, s in config.sessions.items() %}
+<div class="cfg-ligne">
+<span class="cfg-ligne-titre">{{ s.label }} ({{ code }})</span>
+<label>Début<input type="number" name="sess_{{ code }}_debut" value="{{ s.debut }}" min="0" max="23" step="1"></label>
+<label>Fin<input type="number" name="sess_{{ code }}_fin" value="{{ s.fin }}" min="0" max="23" step="1"></label>
+<label>Qualité
+<select name="sess_{{ code }}_qualite">
+<option value="excellente" {% if s.qualite == 'excellente' %}selected{% endif %}>Excellente</option>
+<option value="forte" {% if s.qualite == 'forte' %}selected{% endif %}>Forte</option>
+<option value="moyenne" {% if s.qualite == 'moyenne' %}selected{% endif %}>Moyenne</option>
+<option value="faible" {% if s.qualite == 'faible' %}selected{% endif %}>Faible</option>
+</select>
+</label>
+<label>Label<input type="text" name="sess_{{ code }}_label" value="{{ s.label }}"></label>
+</div>
+{% endfor %}
+</section>
+
+<section class="cfg">
+<h2>💱 Paires actives</h2>
+<div class="cfg-grid">
+{% for pair, p in config.paires.items() %}
+<label class="cfg-check">
+<input type="checkbox" name="pair_{{ pair }}_actif" {% if p.actif %}checked{% endif %}>
+{{ pair }} ({{ p.source }})
+</label>
+{% endfor %}
+</div>
+</section>
+
+<section class="cfg">
+<h2>🛡️ Filtres actifs</h2>
+<div class="cfg-grid">
+{% for f, actif in config.filtres_actifs.items() %}
+<label class="cfg-check">
+<input type="checkbox" name="filtre_{{ f }}" {% if actif %}checked{% endif %}>
+{{ f }}
+</label>
+{% endfor %}
+</div>
+</section>
+
+<section class="cfg">
+<h2>💰 Risque & journal</h2>
+<div class="cfg-grid">
+<label>Risque max par trade (%)<input type="number" name="risque_max_pct" value="{{ config.risque_max_pct }}" min="0.1" max="10" step="0.1"></label>
+<label>Durée min entre signaux identiques (min)<input type="number" name="duree_signal_min" value="{{ config.duree_signal_min }}" min="5" max="240" step="1"></label>
+<label>Taille du journal<input type="number" name="journal_max" value="{{ config.journal_max }}" min="20" max="500" step="10"></label>
+</div>
+</section>
+
+<div class="cfg-actions">
+<button type="submit" class="btn-primaire">💾 Enregistrer</button>
+<a href="/dashboard" class="btn-secondaire">↩ Retour</a>
+</div>
+</form>
+
+<form method="POST" action="/config/reset" onsubmit="return confirm('Réinitialiser toute la configuration aux valeurs par défaut ?');">
+<button type="submit" class="btn-danger">🔄 Réinitialiser aux valeurs par défaut</button>
+</form>
+
+<p class="aide-cfg">Les valeurs sont enregistrées côté serveur dans <code>data/config.json</code>. Elles sont rechargées à chaque calcul — pas besoin de redémarrer l'application.</p>
+
+</main>
+</body></html>

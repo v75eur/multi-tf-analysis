@@ -1,0 +1,35 @@
+{
+  "poids_tf": {"M5": 5, "M15": 4, "M30": 3, "H1": 2, "H4": 1},
+  "ema_court": 5,
+  "ema_long": 25,
+  "periode_tendance": 10,
+  "timing_frais_max": 5,
+  "timing_moyen_max": 12,
+  "seuil_agitation_max": 70,
+  "duree_signal_min": 30,
+  "ratio_min": 1.5,
+  "risque_max_pct": 1.0,
+  "journal_max": 100,
+  "sessions": {
+    "asie":    {"debut": 1,  "fin": 9,  "qualite": "faible",  "label": "Asie"},
+    "londres": {"debut": 9,  "fin": 15, "qualite": "forte",   "label": "Londres"},
+    "overlap": {"debut": 15, "fin": 18, "qualite": "excellente", "label": "Londres + New York"},
+    "newyork": {"debut": 18, "fin": 23, "qualite": "forte",   "label": "New York"},
+    "nuit":    {"debut": 23, "fin": 1,  "qualite": "faible",  "label": "Nuit"}
+  },
+  "paires": {
+    "EURUSD": {"actif": true, "source": "yahoo", "correlees": ["GBPUSD"]},
+    "GBPUSD": {"actif": true, "source": "yahoo", "correlees": ["EURUSD"]},
+    "XAUUSD": {"actif": true, "source": "yahoo", "correlees": []},
+    "V75":    {"actif": true, "source": "deriv", "correlees": []}
+  },
+  "filtres_actifs": {
+    "session": true,
+    "volatilite": true,
+    "tendance_superieure": true,
+    "timing": true,
+    "duplication": true,
+    "correlation": true
+  },
+  "conseil_mode": "detaille"
+}
