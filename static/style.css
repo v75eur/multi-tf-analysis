@@ -53,6 +53,38 @@ section h2{color:var(--cyan);font-size:1.1rem}
 .fraicheur.warn{color:var(--yellow)}
 .fraicheur.ferme{color:#9aa0b4}
 
+/* ═════ CALCULATEUR DE TENDANCE GÉNÉRALE (NOUVEAU) ═════ */
+.general{background:var(--card2);border-radius:12px;padding:.8rem .9rem;margin:.4rem 0 .7rem;border:2px solid rgba(255,255,255,.08)}
+.general.vert{border-color:var(--green)}
+.general.rouge{border-color:var(--red)}
+.general-titre{font-weight:700;font-size:.95rem;margin-bottom:.5rem;display:flex;justify-content:space-between;align-items:center;gap:.5rem;flex-wrap:wrap}
+.general-badge{font-size:.8rem;padding:.25rem .7rem;border-radius:50px;background:rgba(255,255,255,.06)}
+.general-badge.vert{background:rgba(40,200,64,.2);color:var(--green)}
+.general-badge.rouge{background:rgba(255,95,87,.2);color:var(--red)}
+.general-jauge{margin-bottom:.6rem}
+.general-barre{height:14px;border-radius:7px;background:rgba(255,95,87,.25);overflow:hidden;margin-bottom:.4rem}
+.general-barre i.ach{display:block;height:100%;background:linear-gradient(90deg,rgba(40,200,64,.5),rgba(40,200,64,.9));transition:width .4s}
+.general-chiffres{display:flex;justify-content:space-between;font-size:.78rem;font-weight:600;margin-bottom:.4rem}
+.general-score{font-size:.72rem;color:var(--muted)}
+.general-score b{font-size:.85rem}
+.general-score b.vert{color:var(--green)}
+.general-score b.rouge{color:var(--red)}
+.general-align{font-size:.78rem;line-height:1.6;margin-top:.5rem;padding-top:.5rem;border-top:1px solid rgba(255,255,255,.06)}
+.general-align b{color:var(--muted);font-size:.7rem;text-transform:uppercase;letter-spacing:.04em}
+.align-chaine{display:flex;flex-wrap:wrap;align-items:center;gap:.3rem;margin:.5rem 0}
+.align-item{display:inline-block;font-size:.75rem;padding:.25rem .6rem;border-radius:50px;background:rgba(255,255,255,.06);font-weight:600}
+.align-item.vert{background:rgba(40,200,64,.18);color:var(--green)}
+.align-item.rouge{background:rgba(255,95,87,.18);color:var(--red)}
+.align-item.neutre{background:rgba(255,255,255,.06);color:var(--muted)}
+.align-fleche{color:var(--muted);font-size:.75rem}
+.align-verdict{margin-top:.4rem;padding:.45rem .7rem;border-radius:8px;font-size:.76rem;line-height:1.5}
+.align-verdict.vert{background:rgba(40,200,64,.1);color:#a0e8a8}
+.align-verdict.rouge{background:rgba(255,95,87,.1);color:#ffb0aa}
+.align-verdict.jaune{background:rgba(255,189,46,.08);color:#f0d590}
+.confirmation{margin-top:.5rem;padding:.55rem .8rem;border-radius:8px;font-weight:600;font-size:.82rem;line-height:1.5}
+.confirmation.vert{background:rgba(40,200,64,.15);color:#a0e8a8;border-left:3px solid var(--green)}
+.confirmation.rouge{background:rgba(255,95,87,.15);color:#ffb0aa;border-left:3px solid var(--red)}
+
 .conseil{padding:.6rem .9rem;border-radius:8px;font-size:.85rem;margin-bottom:.6rem;line-height:1.5}
 .conseil.vert{background:rgba(40,200,64,.1);border-left:3px solid var(--green);color:#a0e8a8}
 .conseil.rouge{background:rgba(255,95,87,.1);border-left:3px solid var(--red);color:#ffb0aa}
@@ -97,13 +129,14 @@ h3{font-size:.8rem;color:var(--muted);text-transform:uppercase;letter-spacing:.0
 .note{font-size:.78rem;color:var(--muted);line-height:1.5;margin:-.3rem 0 1rem}
 
 .scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
-table{width:100%;min-width:780px;border-collapse:collapse;font-size:.85rem}
+table{width:100%;min-width:820px;border-collapse:collapse;font-size:.85rem}
 th{color:var(--cyan);text-align:left;padding:.4rem;border-bottom:2px solid rgba(0,212,255,.3);font-size:.68rem;text-transform:uppercase;white-space:nowrap}
 td{padding:.4rem;border-bottom:1px solid rgba(255,255,255,.05);white-space:nowrap}
 .pct{color:var(--muted);font-size:.75rem}
 .vert{color:var(--green)}
 .rouge{color:var(--red)}
 .jaune{color:var(--yellow)}
+.poids{display:inline-block;font-size:.7rem;padding:.15rem .45rem;border-radius:50px;background:rgba(0,212,255,.12);color:var(--cyan);font-weight:600}
 .duelcell{min-width:90px}
 .duelcell small{font-size:.7rem}
 .duel{height:6px;background:var(--red);border-radius:4px;overflow:hidden;margin-bottom:.2rem}
@@ -133,4 +166,6 @@ td{padding:.4rem;border-bottom:1px solid rgba(255,255,255,.05);white-space:nowra
   .conseil{font-size:.8rem}
   .stats{grid-template-columns:repeat(2,1fr)}
   .compte input{width:110px}
+  .align-chaine{gap:.2rem}
+  .align-item{font-size:.7rem;padding:.2rem .5rem}
 }

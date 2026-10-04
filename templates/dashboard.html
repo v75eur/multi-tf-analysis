@@ -32,6 +32,7 @@
 {% set c = d.cond %}
 {% set s = d.stats %}
 {% set tfs = d.tfs %}
+{% set gen = d.generale %}
 <section id="{{ pair }}" data-signal="{{ c.signal }}" class="paire {% if c.signal == 'ACHAT' %}signal-achat{% elif c.signal == 'VENTE' %}signal-vente{% endif %}">
 
 <div class="tete">
@@ -48,6 +49,60 @@
 </div>
 
 <div class="fraicheur {{ d.fraicheur.etat }}">{{ d.fraicheur.texte }}</div>
+
+{# ═════════ CALCULATEUR DE TENDANCE GÉNÉRALE (NOUVEAU) ═════════ #}
+{% if gen %}
+<div class="general {{ gen.couleur }}">
+<div class="general-titre">
+🧮 Tendance générale pondérée
+<span class="general-badge {{ gen.couleur }}">{{ gen.tendance }}</span>
+</div>
+
+<div class="general-jauge">
+<div class="general-barre">
+<i class="ach" style="width:{{ gen.ach_gen }}%"></i>
+</div>
+<div class="general-chiffres">
+<span class="vert">🟢 Acheteurs {{ gen.ach_gen }}%</span>
+<span class="rouge">🔴 Vendeurs {{ gen.ven_gen }}%</span>
+</div>
+<div class="general-score">
+Score pondéré : <b class="{{ gen.couleur }}">{{ '%+.1f'|format(gen.score_pct) }}%</b>
+<span class="pct">(M5×5 · M15×4 · M30×3 · H1×2 · H4×1 — les petits TF pèsent plus lourd)</span>
+</div>
+</div>
+
+<div class="general-align">
+<b>Alignement progressif (du plus petit au plus grand) :</b>
+<div class="align-chaine">
+{% for a in gen.align_detail %}
+<span class="align-item {{ 'vert' if a.sens == 'haussier' else 'rouge' if a.sens == 'baissier' else 'neutre' }}">
+{{ a.tf }}
+{% if a.sens == 'haussier' %}↑{% elif a.sens == 'baissier' %}↓{% else %}→{% endif %}
+</span>
+{% if not loop.last %}<span class="align-fleche">→</span>{% endif %}
+{% endfor %}
+</div>
+{% if gen.align_n >= 3 and gen.align_sens %}
+<div class="align-verdict {{ 'vert' if gen.align_sens == 'haussier' else 'rouge' }}">
+✅ {{ gen.align_n }} TF consécutifs alignés {{ 'haussier' if gen.align_sens == 'haussier' else 'baissier' }} ({{ gen.align_sens }}) — mouvement récent cohérent.
+</div>
+{% elif gen.align_n > 0 and gen.align_sens %}
+<div class="align-verdict jaune">
+⚠️ Seulement {{ gen.align_n }} TF aligné(s) {{ gen.align_sens }} — pas encore de consensus progressif.
+</div>
+{% else %}
+<div class="align-verdict jaune">⏸️ Aucun alignement progressif net pour le moment.</div>
+{% endif %}
+</div>
+
+{% if gen.confirmation %}
+<div class="confirmation {{ gen.confirmation.couleur }}">
+{{ gen.confirmation.txt }}
+</div>
+{% endif %}
+</div>
+{% endif %}
 
 <div class="conseil {{ c.couleur }}">{{ c.conseil }}</div>
 
@@ -166,13 +221,14 @@
 <h3>⏱️ Analyse par timeframe</h3>
 <div class="scroll">
 <table>
-<thead><tr><th>TF</th><th>Tendance</th><th>Ach. / Ven.</th><th>Agit.</th><th>Div.</th><th>EMA5</th><th>EMA25</th><th>Signal EMA</th><th>Cassure</th><th>Bougie</th></tr></thead>
+<thead><tr><th>TF</th><th>Poids</th><th>Tendance</th><th>Ach. / Ven.</th><th>Agit.</th><th>Div.</th><th>EMA5</th><th>EMA25</th><th>Signal EMA</th><th>Cassure</th><th>Bougie</th></tr></thead>
 <tbody>
 {% for tf in ["H4", "H1", "M30", "M15", "M5"] %}
 {% if tf in tfs %}
 {% set t = tfs[tf] %}
 <tr class="{% if t.tendance == 'haussier' %}row-h{% elif t.tendance == 'baissier' %}row-b{% endif %}">
 <td><b>{{ t.tf }}</b></td>
+<td><span class="poids">×{{ {'H4':1,'H1':2,'M30':3,'M15':4,'M5':5}[tf] }}</span></td>
 <td>{{ t.tendance }} <span class="pct">{{ t.pct_tendance }}%</span></td>
 <td class="duelcell"><div class="duel"><i style="width:{{ t.pct_acheteurs }}%"></i></div><small><span class="vert">{{ t.pct_acheteurs }}</span> / <span class="rouge">{{ t.pct_vendeurs }}</span></small></td>
 <td>{{ t.pct_agitation }}%</td>
@@ -194,6 +250,9 @@
 <details class="aide">
 <summary>ℹ️ Comment lire</summary>
 <ul>
+<li><b>🧮 Tendance générale pondérée</b> : combine tous les TF avec un poids. Les petits TF (M5×5, M15×4) pèsent plus lourd que les grands (M30×3, H1×2, H4×1), car ils reflètent le mouvement récent. Score +100% = tous haussiers, −100% = tous baissiers.</li>
+<li><b>Alignement progressif</b> : on regarde M5 → M15 → M30 → H1. Si les 4 sont dans le même sens, alors le mouvement est cohérent du plus petit au plus grand.</li>
+<li><b>Confirmation</b> : si M15+M30+H1 alignés ET croisement EMA M5 récent (≤3 bougies) après clôture dans le même sens, alors ACHAT ou VENTE confirmé.</li>
 <li>Signal « détecté » : les timeframes vont dans le même sens. Ce n'est pas une garantie que le prix continue.</li>
 <li>Si le guide est vert, alors les alertes jaunes sont absentes. Si le guide est orange, alors lis les raisons et attends.</li>
 <li>Ach. / Ven. = % de bougies vertes / rouges sur les 10 dernières.</li>

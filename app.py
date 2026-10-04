@@ -16,9 +16,7 @@ JOURS = ["lun", "mar", "mer", "jeu", "ven", "sam", "dim"]
 YAHOO_PAIRS = {"EURUSD": "EURUSD=X", "GBPUSD": "GBPUSD=X", "XAUUSD": "GC=F"}
 DERIV_PAIRS = {"V75": "R_75"}
 DECIMALES = {"EURUSD": 5, "GBPUSD": 5, "XAUUSD": 2, "V75": 4}
-# Taille d'un lot standard (compte en dollars). V75 : non calculé (dépend de ta plateforme).
 CONTRAT = {"EURUSD": 100000, "GBPUSD": 100000, "XAUUSD": 100, "V75": None}
-# tf: (interval Yahoo, période Yahoo, durée d'une bougie en secondes)
 TIMEFRAMES = {
     "H4": ("1h", "60d", 14400),
     "H1": ("1h", "60d", 3600),
@@ -33,6 +31,13 @@ EMA_LONG = 25
 DERIV_WS = "wss://api.derivws.com/trading/v1/options/ws/public"
 CACHE_SEC = {"1h": 300, "30m": 180, "15m": 120, "5m": 60}
 _cache_yahoo = {}
+
+# ───────────── PONDÉRATION DES TIMEFRAMES ─────────────
+# Les petits TF pèsent plus lourd (mouvement récent = ce qui compte maintenant).
+# M5 = 5, M15 = 4, M30 = 3, H1 = 2, H4 = 1
+POIDS_TF = {"M5": 5, "M15": 4, "M30": 3, "H1": 2, "H4": 1}
+# Ordre du plus petit au plus grand (pour l'alignement progressif)
+ORDRE_TF = ["M5", "M15", "M30", "H1", "H4"]
 
 
 def logged():
@@ -90,7 +95,6 @@ def recuperer_bougies_yahoo(symbol, interval, range_):
 
 
 def regrouper(bougies, gran):
-    """Fabrique des grosses bougies (ex: H4) à partir de petites (H1)."""
     groupes = {}
     for b in bougies:
         k = b["t"] // gran * gran
@@ -105,7 +109,6 @@ def regrouper(bougies, gran):
 
 
 def bougies_fermees(bougies, gran):
-    """Retire la dernière bougie si elle n'est pas encore clôturée."""
     if bougies and bougies[-1]["t"] + gran > time.time():
         return bougies[:-1]
     return bougies
@@ -168,7 +171,6 @@ def calc_acheteurs(bougies, periode=10):
 
 
 def calc_agitation(bougies, periode=10):
-    """Part du mouvement perdue en allers-retours (haut = marché indécis)."""
     d = bougies[-periode:]
     if len(d) < 2:
         return 0, 0.0
@@ -232,7 +234,6 @@ def mouvement_moyen(bougies, n=24):
 # ───────────── MOTIFS DE BOUGIES / CASSURE ─────────────
 
 def calc_motifs(bougies):
-    """Mèches de rejet, englobante, bougie anormale (dernière bougie fermée)."""
     b, p = bougies[-1], bougies[-2]
     rng = b["high"] - b["low"]
     motifs, mh, mb = [], False, False
@@ -262,7 +263,6 @@ def calc_motifs(bougies):
 
 
 def calc_cassure(bougies, n=20):
-    """Cassure du plus haut / plus bas des 20 bougies d'avant (sur les 3 dernières bougies)."""
     for k in range(0, 3):
         idx = len(bougies) - 1 - k
         if idx < n:
@@ -298,6 +298,118 @@ def analyser(tf, bougies):
         "motif_haussier": mh, "motif_baissier": mb,
         "cassure": calc_cassure(bougies),
         "prix": clotures[-1]
+    }
+
+
+# ───────────── CALCULATEUR DE TENDANCE GÉNÉRALE (NOUVEAU) ─────────────
+
+def calc_tendance_generale(tfs):
+    """Combine tous les timeframes avec une pondération.
+    Les petits TF pèsent plus lourd (mouvement récent).
+    Retourne : % acheteurs général, % vendeurs général, tendance globale,
+    force, alignement progressif, et confirmation M5."""
+    if not tfs:
+        return None
+
+    # ── 1. Pourcentage acheteurs/vendeurs pondéré ──
+    poids_total = 0
+    somme_ach = 0.0
+    somme_ven = 0.0
+    for tf, data in tfs.items():
+        p = POIDS_TF.get(tf, 1)
+        poids_total += p
+        somme_ach += data["pct_acheteurs"] * p
+        somme_ven += data["pct_vendeurs"] * p
+    if poids_total == 0:
+        return None
+    ach_gen = round(somme_ach / poids_total, 1)
+    ven_gen = round(somme_ven / poids_total, 1)
+
+    # ── 2. Score de tendance pondéré (chaque TF vote -1, 0, +1) ──
+    score = 0
+    score_max = 0
+    for tf, data in tfs.items():
+        p = POIDS_TF.get(tf, 1)
+        score_max += p
+        if data["tendance"] == "haussier":
+            score += p
+        elif data["tendance"] == "baissier":
+            score -= p
+    # Score normalisé entre -100 et +100
+    score_pct = round(score / score_max * 100, 1) if score_max else 0.0
+
+    # ── 3. Conclusion de tendance générale ──
+    if score_pct >= 60:
+        tendance = "ACHAT FORT"
+        couleur = "vert"
+    elif score_pct >= 25:
+        tendance = "ACHAT"
+        couleur = "vert"
+    elif score_pct <= -60:
+        tendance = "VENTE FORTE"
+        couleur = "rouge"
+    elif score_pct <= -25:
+        tendance = "VENTE"
+        couleur = "rouge"
+    else:
+        tendance = "NEUTRE"
+        couleur = ""
+
+    # ── 4. Alignement progressif du plus petit au plus grand ──
+    # On regarde M5 → M15 → M30 → H1 : combien de TF consécutifs alignés ?
+    alignement = {"haussier": 0, "baissier": 0, "detail": []}
+    for sens in ("haussier", "baissier"):
+        compte = 0
+        for tf in ORDRE_TF:
+            if tf not in tfs:
+                break
+            if tfs[tf]["tendance"] == sens:
+                compte += 1
+            else:
+                break
+        alignement[sens] = compte
+
+    # Détail visuel : liste des TF avec leur sens
+    for tf in ORDRE_TF:
+        if tf in tfs:
+            alignement["detail"].append({"tf": tf, "sens": tfs[tf]["tendance"]})
+
+    # Le meilleur alignement progressif
+    if alignement["haussier"] >= alignement["baissier"] and alignement["haussier"] > 0:
+        align_sens = "haussier"
+        align_n = alignement["haussier"]
+    elif alignement["baissier"] > 0:
+        align_sens = "baissier"
+        align_n = alignement["baissier"]
+    else:
+        align_sens = None
+        align_n = 0
+
+    # ── 5. Confirmation M5 après clôture (croisement EMA récent) ──
+    # Si M15+M30+H1 alignés ET EMA M5 croisée dans le même sens après clôture
+    confirmation = None
+    trois = ["M15", "M30", "H1"]
+    if all(tf in tfs for tf in trois) and "M5" in tfs:
+        m15, m30, h1, m5 = tfs["M15"], tfs["M30"], tfs["H1"], tfs["M5"]
+        if m15["tendance"] == m30["tendance"] == h1["tendance"] == "haussier":
+            if m5["ema_signal"] == "haussier" and (m5["ema_depuis"] or 99) <= 3:
+                confirmation = {"sens": "ACHAT", "couleur": "vert",
+                                "txt": "✅ M15+M30+H1 haussiers + croisement EMA M5 haussier récent (après clôture) → ACHAT confirmé."}
+        elif m15["tendance"] == m30["tendance"] == h1["tendance"] == "baissier":
+            if m5["ema_signal"] == "baissier" and (m5["ema_depuis"] or 99) <= 3:
+                confirmation = {"sens": "VENTE", "couleur": "rouge",
+                                "txt": "✅ M15+M30+H1 baissiers + croisement EMA M5 baissier récent (après clôture) → VENTE confirmée."}
+
+    return {
+        "ach_gen": ach_gen,
+        "ven_gen": ven_gen,
+        "score_pct": score_pct,
+        "tendance": tendance,
+        "couleur": couleur,
+        "align_sens": align_sens,
+        "align_n": align_n,
+        "align_detail": alignement["detail"],
+        "confirmation": confirmation,
     }
 
 
@@ -431,7 +543,7 @@ def calc_sltp(pair, prix, m15):
             "vente": cote_sltp(pair, prix, stop_v, obj_v, "vente")}
 
 
-# ───────────── MEILLEURES HEURES (heure du Bénin) ─────────────
+# ───────────── MEILLEURES HEURES ─────────────
 
 def calc_heures(h1):
     par = {}
@@ -465,9 +577,6 @@ def tendance_simple(cl):
 
 
 def backtest(series, pair="", horizon=12, test=1000, max_trade=48):
-    """Rejoue le signal complet (H1+M30+M15+M5) sur les bougies passées.
-    1) Réussite simple : le prix est allé dans le bon sens 'horizon' bougies M5 plus tard (1 h).
-    2) Simulation avec stop et objectif (comme le guide), résultat en R."""
     if any(len(series.get(tf, [])) < 30 for tf in ("H1", "M30", "M15", "M5")):
         return None
     m5 = series["M5"]
@@ -518,7 +627,6 @@ def backtest(series, pair="", horizon=12, test=1000, max_trade=48):
             if (sig == "ACHAT" and sortie > entree) or (sig == "VENTE" and sortie < entree):
                 w[sig] += 1
 
-            # simulation avec stop et objectif (mêmes règles que le guide)
             k15 = bisect.bisect_right(ends["M15"], t)
             sl15 = series["M15"][max(0, k15 - 100):k15]
             if len(sl15) >= 30:
@@ -614,11 +722,12 @@ def fraicheur(m5):
 
 # ───────────── SIGNAL ─────────────
 
-def conditions_paire(tfs, ferme=False):
+def conditions_paire(tfs, ferme=False, generale=None):
     manque = [k for k in ["H1", "M30", "M15", "M5"] if k not in tfs]
     if manque:
         return {"signal": "?", "couleur": "jaune", "bonus": False,
-                "conseil": "Données manquantes : " + ", ".join(manque), "details": {}, "alertes": []}
+                "conseil": "Données manquantes : " + ", ".join(manque), "details": {}, "alertes": [],
+                "generale": generale}
 
     h1, m30, m15, m5 = tfs["H1"], tfs["M30"], tfs["M15"], tfs["M5"]
     h4 = tfs.get("H4")
@@ -666,6 +775,7 @@ def conditions_paire(tfs, ferme=False):
                 "details": {**d, f"H4 {fl}": bonus}}
 
     base["alertes"] = []
+    base["generale"] = generale
     if ferme:
         return {**base, "signal": "FERMÉ", "couleur": "gris", "bonus": False,
                 "conseil": "🌙 Marché fermé : ces chiffres viennent de la dernière séance. N'entre pas. "
@@ -674,7 +784,6 @@ def conditions_paire(tfs, ferme=False):
 
 
 def alertes_signal(cond, tfs, niv, sltp, bt, mm_h1):
-    """Avertissements ajoutés seulement quand le signal est ACHAT ou VENTE."""
     sig = cond["signal"]
     if sig not in ("ACHAT", "VENTE"):
         return []
@@ -768,7 +877,8 @@ def analyser_paire(pair, source):
 
     fr = fraicheur(series.get("M5"))
     stats = calc_stats(pair, series.get("H1", []), resultats)
-    cond = conditions_paire(resultats, fr["etat"] == "ferme")
+    generale = calc_tendance_generale(resultats)
+    cond = conditions_paire(resultats, fr["etat"] == "ferme", generale)
     prix = fp(pair, resultats["M5"]["prix"]) if "M5" in resultats else "—"
 
     niv = sltp = bt = heures = guide = None
@@ -783,7 +893,8 @@ def analyser_paire(pair, source):
         guide = construire_guide(pair, cond, resultats, sltp)
 
     return {"tfs": resultats, "stats": stats, "fraicheur": fr, "cond": cond, "prix": prix,
-            "niv": niv, "sltp": sltp, "bt": bt, "heures": heures, "guide": guide}
+            "niv": niv, "sltp": sltp, "bt": bt, "heures": heures, "guide": guide,
+            "generale": generale}
 
 
 def analyser_securise(pair, source):
@@ -794,7 +905,8 @@ def analyser_securise(pair, source):
         return {"tfs": {}, "stats": None,
                 "fraicheur": {"texte": "Erreur de chargement", "etat": "ferme"},
                 "cond": conditions_paire({}), "prix": "—",
-                "niv": None, "sltp": None, "bt": None, "heures": None, "guide": None}
+                "niv": None, "sltp": None, "bt": None, "heures": None, "guide": None,
+                "generale": None}
 
 
 def analyser_tout():
