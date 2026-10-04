@@ -1,4 +1,4 @@
-import os, json, hashlib, secrets
+import os, json, hashlib, secrets, time
 from datetime import datetime
 from flask import Flask, request, redirect, url_for, session, render_template
 import requests
@@ -9,15 +9,16 @@ app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET", secrets.token_hex(32))
 ADMIN_HASH = os.getenv("ADMIN_HASH", "d0695d2f4b6487fb81c7047ba01d06d5065aa1a9f18f89633389e1e9b5d85fd6")
 
-# Yahoo (REST) pour EURUSD, GBPUSD, XAUUSD
 YAHOO_PAIRS = {"EURUSD": "EURUSD=X", "GBPUSD": "GBPUSD=X", "XAUUSD": "GC=F"}
-# Deriv (WebSocket) pour V75
 DERIV_PAIRS = {"V75": "R_75"}
 TIMEFRAMES = {"H1": ("1h", "60d", 3600), "M30": ("30m", "30d", 1800), "M15": ("15m", "15d", 900), "M5": ("5m", "5d", 300)}
 PERIODE = 10
 LARGEUR_PIVOT = 3
 FENETRE_CREUX = 50
 DERIV_WS = "wss://api.derivws.com/trading/v1/options/ws/public"
+
+_cache_yahoo = {}
+CACHE_YAHOO_SEC = 15 * 60
 
 def logged(): return session.get("admin") is True
 
@@ -35,16 +36,23 @@ def recuperer_bougies_deriv(symbol, granularity, count=100):
         return []
 
 def recuperer_bougies_yahoo(symbol, interval, range_):
+    now = time.time()
+    key = f"{symbol}_{interval}_{range_}"
+    if key in _cache_yahoo:
+        ts, data = _cache_yahoo[key]
+        if now - ts < CACHE_YAHOO_SEC:
+            return data
     try:
         url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval={interval}&range={range_}"
         r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
         data = r.json()["chart"]["result"][0]
-        ts = data["timestamp"]
+        ts_list = data["timestamp"]
         q = data["indicators"]["quote"][0]
         bougies = []
-        for i in range(len(ts)):
+        for i in range(len(ts_list)):
             if q["open"][i] and q["high"][i] and q["low"][i] and q["close"][i]:
-                bougies.append({"t": ts[i], "open": q["open"][i], "high": q["high"][i], "low": q["low"][i], "close": q["close"][i]})
+                bougies.append({"t": ts_list[i], "open": q["open"][i], "high": q["high"][i], "low": q["low"][i], "close": q["close"][i]})
+        _cache_yahoo[key] = (now, bougies)
         return bougies
     except Exception as e:
         print(f"Yahoo {symbol}: {e}")

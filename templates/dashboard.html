@@ -1,6 +1,13 @@
 <!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Dashboard</title><link rel="stylesheet" href="/static/style.css"></head>
 <body>
-<header><h1>📊 Multi-TF Analysis</h1><div><span class="time">{{ now }}</span> <a href="/logout" class="logout">🚪</a></div></header>
+<header>
+<h1>📊 Multi-TF Analysis</h1>
+<div>
+<span class="time">{{ now }}</span>
+<span class="countdown">🔄 <span id="countdown">5min 0s</span></span>
+<a href="/logout" class="logout">🚪</a>
+</div>
+</header>
 <main>
 
 <section class="intro">
@@ -85,4 +92,17 @@ Marché incertain → <b>ATTENDRE</b>. Ne force pas un trade.
 </section>
 
 </main>
+<script>
+setTimeout(function() {
+  console.log("🔄 Auto-refresh (5 min)");
+  location.reload();
+}, 5 * 60 * 1000);
+let sec = 300;
+const timer = setInterval(() => {
+  sec--;
+  const el = document.getElementById('countdown');
+  if (el) el.textContent = Math.floor(sec/60) + 'min ' + (sec%60) + 's';
+  if (sec <= 0) clearInterval(timer);
+}, 1000);
+</script>
 </body></html>

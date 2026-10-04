@@ -9,6 +9,7 @@ body{font-family:system-ui,sans-serif;background:#0a0a12;color:#fff;padding:.8re
 header{display:flex;justify-content:space-between;align-items:center;padding:.8rem 1rem;background:#15152a;border-radius:12px;margin-bottom:1rem;flex-wrap:wrap;gap:.5rem}
 header h1{font-size:1rem}
 .time{color:rgba(255,255,255,.5);font-size:.85rem;margin-right:.5rem}
+.countdown{background:rgba(0,212,255,.1);padding:.3rem .7rem;border-radius:50px;font-size:.75rem;color:#00d4ff;margin-right:.5rem}
 .logout{color:#ff5f57;text-decoration:none}
 main{max-width:1200px;margin:0 auto}
 section{background:#15152a;border-radius:12px;padding:1rem;margin-bottom:1rem}
