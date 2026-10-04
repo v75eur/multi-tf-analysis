@@ -18,32 +18,21 @@ DERIV_PAIRS = {"V75": "R_75"}
 DECIMALES = {"EURUSD": 5, "GBPUSD": 5, "XAUUSD": 2, "V75": 4}
 # Taille d'un lot standard (compte en dollars). V75 : non calculé (dépend de ta plateforme).
 CONTRAT = {"EURUSD": 100000, "GBPUSD": 100000, "XAUUSD": 100, "V75": None}
-# Spread supposé (en prix), déduit de chaque trade du test. MODIFIE selon ton broker.
-SPREAD = {"EURUSD": 0.00010, "GBPUSD": 0.00015, "XAUUSD": 0.30, "V75": 0.0}
 # tf: (interval Yahoo, période Yahoo, durée d'une bougie en secondes)
 TIMEFRAMES = {
     "H4": ("1h", "60d", 14400),
     "H1": ("1h", "60d", 3600),
     "M30": ("30m", "30d", 1800),
     "M15": ("15m", "15d", 900),
-    "M5": ("5m", "30d", 300),
+    "M5": ("5m", "7d", 300),
 }
-DERIV_COUNT = {"H4": 300, "H1": 400, "M30": 600, "M15": 1200, "M5": 3000}
+DERIV_COUNT = {"H4": 300, "H1": 300, "M30": 300, "M15": 400, "M5": 1000}
 PERIODE = 10
 EMA_COURT = 5
 EMA_LONG = 25
 DERIV_WS = "wss://api.derivws.com/trading/v1/options/ws/public"
 CACHE_SEC = {"1h": 300, "30m": 180, "15m": 120, "5m": 60}
 _cache_yahoo = {}
-_cache_bt = {}
-
-MODES = {
-    "strict": "Strict (7 conditions)",
-    "strict_f": "Strict + filtres",
-    "souple": "Souple (H1 + M15 + EMA M5)",
-    "souple_f": "Souple + filtres",
-}
-MIN_TRADES = 12
 
 
 def logged():
@@ -58,7 +47,7 @@ def fp(pair, x):
 
 def recuperer_bougies_deriv(symbol, granularity, count=300):
     try:
-        ws = websocket.create_connection(DERIV_WS, timeout=20)
+        ws = websocket.create_connection(DERIV_WS, timeout=15)
         ws.send(json.dumps({"ticks_history": symbol, "count": count, "end": "latest",
                             "style": "candles", "granularity": granularity}))
         r = json.loads(ws.recv())
@@ -82,7 +71,7 @@ def recuperer_bougies_yahoo(symbol, interval, range_):
             return data
     try:
         url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval={interval}&range={range_}"
-        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=20)
+        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
         data = r.json()["chart"]["result"][0]
         ts_list = data["timestamp"]
         q = data["indicators"]["quote"][0]
@@ -467,205 +456,144 @@ def calc_heures(h1):
     }
 
 
-# ───────────── MODES DE SIGNAL (live) ─────────────
-
-def etat_live(t):
-    if t["tendance"] == "haussier" and t["pct_acheteurs"] > t["pct_vendeurs"]:
-        return 1
-    if t["tendance"] == "baissier" and t["pct_vendeurs"] > t["pct_acheteurs"]:
-        return -1
-    return 0
-
-
-def signal_live(mode, tfs, sltp):
-    """Renvoie 'ACHAT', 'VENTE' ou None pour un mode donné, avec les données actuelles."""
-    if any(k not in tfs for k in ("H1", "M30", "M15", "M5")):
-        return None
-    h1s, m30s, m15s = etat_live(tfs["H1"]), etat_live(tfs["M30"]), etat_live(tfs["M15"])
-    if mode.startswith("strict"):
-        base = h1s if (h1s != 0 and h1s == m30s == m15s) else 0
-    else:
-        base = h1s if (h1s != 0 and h1s == m15s) else 0
-    m5 = tfs["M5"]
-    ema = 1 if m5["ema_signal"] == "haussier" else -1 if m5["ema_signal"] == "baissier" else 0
-    if base == 0 or ema != base:
-        return None
-    if mode.endswith("_f"):
-        if (m5["ema_depuis"] or 0) > 12 or m5["grande"]:
-            return None
-        cote = sltp["achat" if base == 1 else "vente"] if sltp else None
-        if not cote or cote["ratio"] < 1.5:
-            return None
-    return "ACHAT" if base == 1 else "VENTE"
-
-
 # ───────────── TEST SUR LE PASSÉ ─────────────
 
-def etat_bt(sl):
-    d = sl[-PERIODE:]
-    cl = [b["close"] for b in d]
-    p = np.polyfit(np.arange(len(cl)), np.array(cl), 1)[0]
-    v = sum(1 for b in d if b["close"] > b["open"])
-    r = sum(1 for b in d if b["close"] < b["open"])
-    if p > 0 and v > r:
-        return 1
-    if p < 0 and r > v:
-        return -1
-    return 0
+def tendance_simple(cl):
+    x = np.arange(len(cl))
+    p = np.polyfit(x, np.array(cl), 1)[0]
+    return 1 if p > 0 else -1 if p < 0 else 0
 
 
-def est_grande(m5, i):
-    rng = m5[i]["high"] - m5[i]["low"]
-    recent = m5[max(0, i - 20):i]
-    if not recent:
-        return False
-    moy = float(np.mean([x["high"] - x["low"] for x in recent]))
-    return moy > 0 and rng / moy >= 2
-
-
-def simuler(m5, i, sens, cote, spread, max_trade):
-    """Simule un trade avec stop et objectif. Résultat en R, spread déduit."""
-    entree = m5[i]["close"]
-    st, ob = cote["stop_brut"], cote["obj_brut"]
-    risque = abs(entree - st)
-    if risque <= 0:
-        return None
-    cout = spread / risque
-    fin = min(len(m5) - 1, i + max_trade)
-    for j in range(i + 1, fin + 1):
-        bj = m5[j]
-        if sens == "ACHAT":
-            if bj["low"] <= st:
-                return -1.0 - cout
-            if bj["high"] >= ob:
-                return cote["ratio"] - cout
-        else:
-            if bj["high"] >= st:
-                return -1.0 - cout
-            if bj["low"] <= ob:
-                return cote["ratio"] - cout
-    if fin == i + max_trade:
-        dernier = m5[fin]["close"]
-        brut = ((dernier - entree) if sens == "ACHAT" else (entree - dernier)) / risque
-        return brut - cout
-    return None
-
-
-def cotes_au_temps(pair, series_m15, ends15, t, entree):
-    k = bisect.bisect_right(ends15, t)
-    sl = series_m15[max(0, k - 100):k]
-    if len(sl) < 30:
-        return {"achat": None, "vente": None}
-    return calc_sltp(pair, entree, sl)
-
-
-def backtest(series, pair, test=2500, min_avant=12, max_trade=48):
-    """Rejoue 4 modes de signal sur les bougies passées, avec stop, objectif et spread."""
+def backtest(series, pair="", horizon=12, test=1000, max_trade=48):
+    """Rejoue le signal complet (H1+M30+M15+M5) sur les bougies passées.
+    1) Réussite simple : le prix est allé dans le bon sens 'horizon' bougies M5 plus tard (1 h).
+    2) Simulation avec stop et objectif (comme le guide), résultat en R."""
     if any(len(series.get(tf, [])) < 30 for tf in ("H1", "M30", "M15", "M5")):
         return None
     m5 = series["M5"]
     ends = {tf: [b["t"] + g for b in series[tf]] for tf, g in (("H1", 3600), ("M30", 1800), ("M15", 900))}
     debut = max(40, len(m5) - test)
-    fin_boucle = len(m5) - min_avant
-    spread = SPREAD.get(pair, 0.0)
-    prev = {m: None for m in MODES}
-    trades = {m: [] for m in MODES}
-
-    for i in range(debut, fin_boucle):
-        if m5[i + min_avant]["t"] - m5[i]["t"] > min_avant * 300 * 1.5:
-            prev = {m: None for m in MODES}
+    n = {"ACHAT": 0, "VENTE": 0}
+    w = {"ACHAT": 0, "VENTE": 0}
+    sim = {"tp": 0, "sl": 0, "to": 0, "r": []}
+    prev = None
+    for i in range(debut, len(m5) - horizon):
+        if m5[i + horizon]["t"] - m5[i]["t"] > horizon * 300 * 1.5:
+            prev = None
             continue
         t = m5[i]["t"] + 300
-        etats, ok = {}, True
+        etats, ok = set(), True
         for tf in ("H1", "M30", "M15"):
             k = bisect.bisect_right(ends[tf], t)
             sl = series[tf][max(0, k - 60):k]
             if len(sl) < 30:
                 ok = False
                 break
-            etats[tf] = etat_bt(sl)
+            tend = tendance_simple([b["close"] for b in sl[-PERIODE:]])
+            d = sl[-PERIODE:]
+            v = sum(1 for b in d if b["close"] > b["open"])
+            r = sum(1 for b in d if b["close"] < b["open"])
+            if tend > 0 and v > r:
+                etats.add(1)
+            elif tend < 0 and r > v:
+                etats.add(-1)
+            else:
+                etats.add(0)
         if not ok:
-            prev = {m: None for m in MODES}
+            prev = None
             continue
-        h1s, m30s, m15s = etats["H1"], etats["M30"], etats["M15"]
-        s_souple = h1s if (h1s != 0 and h1s == m15s) else 0
-        s_strict = h1s if (h1s != 0 and h1s == m30s == m15s) else 0
-
-        ema_sens, depuis, grande = 0, 0, False
-        if s_souple != 0:
+        sig = None
+        if etats == {1} or etats == {-1}:
+            s = next(iter(etats))
             cl = [b["close"] for b in m5[max(0, i - 100):i + 1]]
-            _, _, sg, dep = calc_ema_signal(cl)
-            ema_sens = 1 if sg == "haussier" else -1 if sg == "baissier" else 0
-            depuis = dep or 0
-            grande = est_grande(m5, i)
+            e5, e25 = calc_ema_serie(cl, EMA_COURT), calc_ema_serie(cl, EMA_LONG)
+            if e5 and e25:
+                if s == 1 and e5[-1] > e25[-1]:
+                    sig = "ACHAT"
+                elif s == -1 and e5[-1] < e25[-1]:
+                    sig = "VENTE"
+        if sig and sig != prev:
+            n[sig] += 1
+            entree, sortie = m5[i]["close"], m5[i + horizon]["close"]
+            if (sig == "ACHAT" and sortie > entree) or (sig == "VENTE" and sortie < entree):
+                w[sig] += 1
 
-        entree = m5[i]["close"]
-        cotes = None
-        for mode in MODES:
-            base = s_strict if mode.startswith("strict") else s_souple
-            sig, cote = None, None
-            if base != 0 and ema_sens == base:
-                ok_filtre = True
-                if mode.endswith("_f"):
-                    if depuis > 12 or grande:
-                        ok_filtre = False
-                    else:
-                        if cotes is None:
-                            cotes = cotes_au_temps(pair, series["M15"], ends["M15"], t, entree)
-                        cote = cotes["achat" if base == 1 else "vente"]
-                        if not cote or cote["ratio"] < 1.5:
-                            ok_filtre = False
-                if ok_filtre:
-                    sig = "ACHAT" if base == 1 else "VENTE"
-            if sig and sig != prev[mode]:
-                if cote is None:
-                    if cotes is None:
-                        cotes = cotes_au_temps(pair, series["M15"], ends["M15"], t, entree)
-                    cote = cotes["achat" if sig == "ACHAT" else "vente"]
+            # simulation avec stop et objectif (mêmes règles que le guide)
+            k15 = bisect.bisect_right(ends["M15"], t)
+            sl15 = series["M15"][max(0, k15 - 100):k15]
+            if len(sl15) >= 30:
+                cote = calc_sltp(pair, entree, sl15)["achat" if sig == "ACHAT" else "vente"]
                 if cote:
-                    r = simuler(m5, i, sig, cote, spread, max_trade)
-                    if r is not None:
-                        trades[mode].append((i, r))
-            prev[mode] = sig
+                    st, ob = cote["stop_brut"], cote["obj_brut"]
+                    risque = abs(entree - st)
+                    fin = min(len(m5) - 1, i + max_trade)
+                    res_r = None
+                    for j in range(i + 1, fin + 1):
+                        bj = m5[j]
+                        if sig == "ACHAT":
+                            if bj["low"] <= st:
+                                res_r = -1.0
+                                sim["sl"] += 1
+                                break
+                            if bj["high"] >= ob:
+                                res_r = cote["ratio"]
+                                sim["tp"] += 1
+                                break
+                        else:
+                            if bj["high"] >= st:
+                                res_r = -1.0
+                                sim["sl"] += 1
+                                break
+                            if bj["low"] <= ob:
+                                res_r = cote["ratio"]
+                                sim["tp"] += 1
+                                break
+                    if res_r is None and fin == i + max_trade:
+                        dernier = m5[fin]["close"]
+                        res_r = ((dernier - entree) if sig == "ACHAT" else (entree - dernier)) / risque
+                        sim["to"] += 1
+                    if res_r is not None:
+                        sim["r"].append(res_r)
+        prev = sig
 
-    coupe = debut + int((fin_boucle - debut) * 0.6)
-    modes, meilleur, meilleur_r = [], None, None
-    for mode, label in MODES.items():
-        rs = [r for _, r in trades[mode]]
-        tr = [r for idx, r in trades[mode] if idx < coupe]
-        te = [r for idx, r in trades[mode] if idx >= coupe]
-        n = len(rs)
-        avg = round(float(np.mean(rs)), 2) if n else None
-        wr = round(sum(1 for r in rs if r > 0) / n * 100, 1) if n else None
-        train = round(float(np.mean(tr)), 2) if tr else None
-        test_r = round(float(np.mean(te)), 2) if te else None
-        valide = bool(n >= MIN_TRADES and avg is not None and avg > 0.1
-                      and len(tr) >= 4 and len(te) >= 4
-                      and train is not None and test_r is not None and train > 0 and test_r > 0)
-        if valide:
-            couleur = "vert"
-        elif n >= 8 and avg is not None and avg < -0.1:
-            couleur = "rouge"
-        else:
-            couleur = ""
-        modes.append({"key": mode, "label": label, "n": n, "avg": avg, "wr": wr,
-                      "train": train, "n_train": len(tr), "test": test_r, "n_test": len(te),
-                      "valide": valide, "couleur": couleur})
-        if valide and (meilleur_r is None or avg > meilleur_r):
-            meilleur, meilleur_r = mode, avg
+    total, gagnes = n["ACHAT"] + n["VENTE"], w["ACHAT"] + w["VENTE"]
+    pct = round(gagnes / total * 100, 1) if total else None
+    if total < 8:
+        verdict = "Trop peu de signaux pour conclure : si tu vois moins de 8 signaux, alors le résultat peut être dû au hasard."
+        couleur = ""
+    elif pct >= 55:
+        verdict = "Plutôt bon sur cette période : si la réussite reste au-dessus de 55 %, alors le signal a un petit avantage."
+        couleur = "vert"
+    elif pct >= 45:
+        verdict = "Proche du hasard (50 %) : si c'est le cas, alors le signal seul ne suffit pas. Regarde le ratio gain/risque."
+        couleur = ""
+    else:
+        verdict = "Mauvais sur cette période : si le signal perd plus qu'il ne gagne, alors évite-le sur cette devise."
+        couleur = "rouge"
+
+    sim_n = len(sim["r"])
+    sim_r = round(float(np.mean(sim["r"])), 2) if sim_n else None
+    if sim_n < 8:
+        sim_verdict = "Trop peu de trades simulés pour conclure."
+        sim_couleur = ""
+    elif sim_r > 0.15:
+        sim_verdict = "Avec stop et objectif, le signal gagne en moyenne sur cette période."
+        sim_couleur = "vert"
+    elif sim_r < -0.1:
+        sim_verdict = "Avec stop et objectif, le signal perd en moyenne : évite-le sur cette devise."
+        sim_couleur = "rouge"
+    else:
+        sim_verdict = "Avec stop et objectif, le résultat est proche de zéro : pas d'avantage net."
+        sim_couleur = ""
 
     heures = round((m5[-1]["t"] - m5[debut]["t"]) / 3600)
-    return {"modes": modes, "meilleur": meilleur, "heures": heures,
-            "spread": fp(pair, spread), "min_trades": MIN_TRADES}
-
-
-def backtest_cache(pair, series):
-    now = time.time()
-    if pair in _cache_bt and now - _cache_bt[pair][0] < 600:
-        return _cache_bt[pair][1]
-    res = backtest(series, pair)
-    _cache_bt[pair] = (now, res)
-    return res
+    return {
+        "n": total, "wins": gagnes, "pct": pct, "couleur": couleur, "heures": heures,
+        "achat_n": n["ACHAT"], "achat_w": w["ACHAT"], "vente_n": n["VENTE"], "vente_w": w["VENTE"],
+        "verdict": verdict,
+        "sim_n": sim_n, "sim_tp": sim["tp"], "sim_sl": sim["sl"], "sim_to": sim["to"],
+        "sim_r": sim_r, "sim_couleur": sim_couleur, "sim_verdict": sim_verdict,
+    }
 
 
 # ───────────── FRAÎCHEUR DES DONNÉES ─────────────
@@ -684,13 +612,13 @@ def fraicheur(m5):
     return {"texte": f"🌙 Marché fermé ou pas de données · dernière bougie M5 : {h}", "etat": "ferme"}
 
 
-# ───────────── SIGNAL STRICT (affichage des 7 conditions) ─────────────
+# ───────────── SIGNAL ─────────────
 
 def conditions_paire(tfs, ferme=False):
     manque = [k for k in ["H1", "M30", "M15", "M5"] if k not in tfs]
     if manque:
         return {"signal": "?", "couleur": "jaune", "bonus": False,
-                "conseil": "Données manquantes : " + ", ".join(manque), "details": {}}
+                "conseil": "Données manquantes : " + ", ".join(manque), "details": {}, "alertes": []}
 
     h1, m30, m15, m5 = tfs["H1"], tfs["M30"], tfs["M15"], tfs["M5"]
     h4 = tfs.get("H4")
@@ -715,9 +643,13 @@ def conditions_paire(tfs, ferme=False):
     for sens, nom, couleur in (("haussier", "ACHAT", "vert"), ("baissier", "VENTE", "rouge")):
         d, bonus, fl = res[sens]
         if all(d.values()):
-            conseil = f"Signal {nom} détecté (mode strict). Regarde le verdict final : seul un mode validé sur le passé compte."
+            conseil = f"✅ Signal {nom} détecté. Entre à la clôture M5 seulement si le guide ci-dessous est au vert."
+            if bonus:
+                conseil = f"⭐ Signal {nom} détecté, H4 dans le même sens. Entre à la clôture M5 seulement si le guide ci-dessous est au vert."
             dep = m5["ema_depuis"] or 0
-            if dep > 12:
+            if dep <= 3:
+                conseil += " 🔥 Croisement EMA récent."
+            elif dep > 12:
                 conseil += f" ⚠️ EMA croisée depuis {dep} bougies : entrée tardive."
             details = {**d, f"H4 {fl}": bonus}
             base = {"signal": nom, "couleur": couleur, "bonus": bonus, "conseil": conseil, "details": details}
@@ -729,21 +661,25 @@ def conditions_paire(tfs, ferme=False):
         nom = "ACHAT" if meilleur == "haussier" else "VENTE"
         manque_c = [k for k, v in d.items() if not v]
         ok = len(d) - len(manque_c)
-        conseil = f"Mode strict : {ok}/{len(d)} conditions {nom}. Il manque : {', '.join(manque_c)}."
+        conseil = f"⏸️ Attendre : {ok}/{len(d)} conditions {nom}. Il manque : {', '.join(manque_c)}."
         base = {"signal": "ATTENDRE", "couleur": "jaune", "bonus": False, "conseil": conseil,
                 "details": {**d, f"H4 {fl}": bonus}}
 
+    base["alertes"] = []
     if ferme:
         return {**base, "signal": "FERMÉ", "couleur": "gris", "bonus": False,
-                "conseil": "🌙 Marché fermé : ces chiffres viennent de la dernière séance. N'entre pas."}
+                "conseil": "🌙 Marché fermé : ces chiffres viennent de la dernière séance. N'entre pas. "
+                           f"(Dernier verdict : {base['signal']})"}
     return base
 
 
-# ───────────── ALERTES, VERDICT, GUIDE ─────────────
-
-def alertes_signal(sens, tfs, niv, sltp, mm_h1):
+def alertes_signal(cond, tfs, niv, sltp, bt, mm_h1):
+    """Avertissements ajoutés seulement quand le signal est ACHAT ou VENTE."""
+    sig = cond["signal"]
+    if sig not in ("ACHAT", "VENTE"):
+        return []
     al = []
-    achat = sens == "ACHAT"
+    achat = sig == "ACHAT"
     m5, m15 = tfs["M5"], tfs["M15"]
     prix = m5["prix"]
 
@@ -763,8 +699,8 @@ def alertes_signal(sens, tfs, niv, sltp, mm_h1):
     else:
         al.append({"txt": f"⚠️ Ratio gain/risque {cote['ratio']} : sous 1,5, le trade ne vaut pas le coup.", "cls": "jaune"})
 
-    cs = "haussiere" if achat else "baissiere"
-    if m15["cassure"]["sens"] == cs:
+    sens = "haussiere" if achat else "baissiere"
+    if m15["cassure"]["sens"] == sens:
         al.append({"txt": "💥 Cassure M15 dans le sens du signal (elle peut être fausse : vérifie que la bougie suivante tient).", "cls": "vert"})
 
     pour = "motif_haussier" if achat else "motif_baissier"
@@ -773,50 +709,44 @@ def alertes_signal(sens, tfs, niv, sltp, mm_h1):
         al.append({"txt": "🕯️ Bougie de rejet ou d'englobement dans le même sens (un indice, pas une preuve).", "cls": "vert"})
     if m5[contre]:
         al.append({"txt": "⚠️ Bougie M5 de sens contraire (mèche ou englobante) : prudence.", "cls": "jaune"})
+
+    if bt and bt["n"] >= 10 and bt["pct"] is not None and bt["pct"] < 45:
+        al.append({"txt": f"⚠️ Sur le passé, ce signal ne va dans le bon sens que {bt['pct']}% des fois sur cette devise.", "cls": "jaune"})
+    if bt and bt["sim_n"] >= 8 and bt["sim_r"] is not None and bt["sim_r"] < 0:
+        al.append({"txt": f"⚠️ Sur le passé, avec stop et objectif, ce signal perd en moyenne {abs(bt['sim_r'])} R par trade.", "cls": "jaune"})
     return al
 
 
-def construire_verdict(tfs, sltp, bt, ferme, cond):
-    if ferme:
-        return {"etat": "ferme", "court": "FERMÉ", "couleur": "gris", "sens": None, "mode": None,
-                "titre": "🌙 Marché fermé", "txt": "N'entre pas : les chiffres viennent de la dernière séance."}
-    if cond["signal"] == "?" or not bt:
-        return {"etat": "donnees", "court": "DONNÉES", "couleur": "jaune", "sens": None, "mode": None,
-                "titre": "⚠️ Données insuffisantes", "txt": "Il manque des bougies pour juger cette devise. Attends le prochain rafraîchissement."}
-    best = bt["meilleur"]
-    if not best:
-        return {"etat": "aucun", "court": "AUCUN MODE", "couleur": "gris", "sens": None, "mode": None,
-                "titre": "⛔ N'entre pas : aucun mode validé",
-                "txt": "Sur le passé, aucun des 4 modes n'est validé pour cette devise. Si tu entres quand même, alors tu n'as aucune preuve que le signal marche ici."}
-    label = MODES[best]
-    sens = signal_live(best, tfs, sltp)
-    if sens is None:
-        return {"etat": "attente", "court": "ATTENDRE", "couleur": "jaune", "sens": None, "mode": label,
-                "titre": "⏳ Attends",
-                "txt": f"Le mode « {label} » est validé pour cette devise, mais il n'y a pas de signal maintenant."}
-    return {"etat": "entrer", "court": sens, "couleur": "vert" if sens == "ACHAT" else "rouge",
-            "sens": sens, "mode": label,
-            "titre": f"✅ Entre : {sens}",
-            "txt": f"Le mode « {label} » est validé sur le passé et son signal {sens} est actif. Lis le guide avant d'entrer."}
+# ───────────── GUIDE DU TRADE ─────────────
 
-
-def construire_guide(pair, sens, mode, tfs, sltp):
-    achat = sens == "ACHAT"
-    cote = sltp["achat" if achat else "vente"] if sltp else None
-    if not cote:
+def construire_guide(pair, cond, tfs, sltp):
+    sig = cond["signal"]
+    if sig not in ("ACHAT", "VENTE") or not sltp:
         return None
+    achat = sig == "ACHAT"
+    cote = sltp["achat" if achat else "vente"]
     prix = tfs["M5"]["prix"]
+    raisons = [a["txt"] for a in cond.get("alertes", []) if a["cls"] == "jaune"]
     nxt = (int(time.time() // 300) + 1) * 300
-    return {
-        "sens": sens, "mode": mode,
+    g = {
+        "sens": sig,
+        "feu": "vert" if not raisons else "orange",
+        "raisons": raisons,
         "heure": datetime.fromtimestamp(nxt, BENIN).strftime("%H:%M"),
         "prix": fp(pair, prix),
         "contrat": CONTRAT.get(pair),
-        "stop": cote["stop"], "objectif": cote["objectif"], "ratio": cote["ratio"],
-        "dist": f"{abs(prix - cote['stop_brut']):.8f}",
-        "dist_obj": f"{abs(cote['obj_brut'] - prix):.8f}",
-        "moitie": fp(pair, prix + (cote["obj_brut"] - prix) / 2),
+        "stop": None,
     }
+    if cote:
+        g.update({
+            "stop": cote["stop"], "objectif": cote["objectif"], "ratio": cote["ratio"],
+            "dist": f"{abs(prix - cote['stop_brut']):.8f}",
+            "dist_obj": f"{abs(cote['obj_brut'] - prix):.8f}",
+            "moitie": fp(pair, prix + (cote["obj_brut"] - prix) / 2),
+        })
+    else:
+        g["feu"] = "orange"
+    return g
 
 
 # ───────────── ANALYSE D'UNE PAIRE ─────────────
@@ -837,39 +767,23 @@ def analyser_paire(pair, source):
             resultats[tf] = r
 
     fr = fraicheur(series.get("M5"))
-    ferme = fr["etat"] == "ferme"
     stats = calc_stats(pair, series.get("H1", []), resultats)
-    cond = conditions_paire(resultats, ferme)
+    cond = conditions_paire(resultats, fr["etat"] == "ferme")
     prix = fp(pair, resultats["M5"]["prix"]) if "M5" in resultats else "—"
 
     niv = sltp = bt = heures = guide = None
-    alertes = []
     h1, m15 = series.get("H1", []), series.get("M15", [])
     if "M5" in resultats and len(h1) >= 30 and len(m15) >= 30:
         p = resultats["M5"]["prix"]
         niv = calc_niveaux(pair, p, m15, h1)
         sltp = calc_sltp(pair, p, m15)
         heures = calc_heures(h1)
-        bt = backtest_cache(pair, series)
-
-    verdict = construire_verdict(resultats, sltp, bt, ferme, cond)
-    if verdict["etat"] == "entrer" and niv:
-        alertes = alertes_signal(verdict["sens"], resultats, niv, sltp, mouvement_moyen(h1, 24))
-        jaunes = [a["txt"] for a in alertes if a["cls"] == "jaune"]
-        if jaunes:
-            verdict = {"etat": "attente", "court": "ATTENDRE", "couleur": "jaune", "sens": None,
-                       "mode": verdict["mode"], "titre": "⏳ Attends : le signal est actif mais pas idéal",
-                       "txt": "Le mode validé donne un signal, mais : " + " ".join(jaunes)}
-        else:
-            guide = construire_guide(pair, verdict["sens"], verdict["mode"], resultats, sltp)
-            if guide is None:
-                verdict = {"etat": "attente", "court": "ATTENDRE", "couleur": "jaune", "sens": None,
-                           "mode": verdict["mode"], "titre": "⏳ Attends",
-                           "txt": "Pas de stop ni d'objectif clair pour le moment."}
+        bt = backtest(series, pair)
+        cond["alertes"] = alertes_signal(cond, resultats, niv, sltp, bt, mouvement_moyen(h1, 24))
+        guide = construire_guide(pair, cond, resultats, sltp)
 
     return {"tfs": resultats, "stats": stats, "fraicheur": fr, "cond": cond, "prix": prix,
-            "niv": niv, "sltp": sltp, "bt": bt, "heures": heures, "guide": guide,
-            "alertes": alertes, "verdict": verdict}
+            "niv": niv, "sltp": sltp, "bt": bt, "heures": heures, "guide": guide}
 
 
 def analyser_securise(pair, source):
@@ -880,9 +794,7 @@ def analyser_securise(pair, source):
         return {"tfs": {}, "stats": None,
                 "fraicheur": {"texte": "Erreur de chargement", "etat": "ferme"},
                 "cond": conditions_paire({}), "prix": "—",
-                "niv": None, "sltp": None, "bt": None, "heures": None, "guide": None, "alertes": [],
-                "verdict": {"etat": "donnees", "court": "ERREUR", "couleur": "jaune", "sens": None, "mode": None,
-                            "titre": "⚠️ Erreur de chargement", "txt": "Réessaie au prochain rafraîchissement."}}
+                "niv": None, "sltp": None, "bt": None, "heures": None, "guide": None}
 
 
 def analyser_tout():

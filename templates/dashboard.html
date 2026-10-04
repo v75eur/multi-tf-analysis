@@ -20,10 +20,10 @@
 
 <div class="resume">
 {% for pair, d in paires.items() %}
-<a href="#{{ pair }}" class="chip {{ d.verdict.couleur }}">
+<a href="#{{ pair }}" class="chip {{ d.cond.couleur }}">
 <b>{{ pair }}</b>
 <span>{{ d.prix }}</span>
-<em>{{ d.verdict.court }}</em>
+<em>{{ d.cond.signal }}</em>
 </a>
 {% endfor %}
 </div>
@@ -32,8 +32,7 @@
 {% set c = d.cond %}
 {% set s = d.stats %}
 {% set tfs = d.tfs %}
-{% set vd = d.verdict %}
-<section id="{{ pair }}" data-signal="{{ vd.sens if vd.etat == 'entrer' else '' }}" class="paire {% if vd.etat == 'entrer' and vd.sens == 'ACHAT' %}signal-achat{% elif vd.etat == 'entrer' and vd.sens == 'VENTE' %}signal-vente{% endif %}">
+<section id="{{ pair }}" data-signal="{{ c.signal }}" class="paire {% if c.signal == 'ACHAT' %}signal-achat{% elif c.signal == 'VENTE' %}signal-vente{% endif %}">
 
 <div class="tete">
 <div>
@@ -43,33 +42,39 @@
 </div>
 </div>
 <div class="badges">
-<span class="signal-badge {{ vd.couleur }}">{{ vd.court }}</span>
+<span class="signal-badge {{ c.couleur }}">{{ c.signal }}</span>
+{% if c.bonus %}<span class="bonus">⭐ H4</span>{% endif %}
 </div>
 </div>
 
 <div class="fraicheur {{ d.fraicheur.etat }}">{{ d.fraicheur.texte }}</div>
 
-<div class="verdict v-{{ vd.etat }}">
-<div class="verdict-titre">{{ vd.titre }}</div>
-<div>{{ vd.txt }}</div>
-</div>
+<div class="conseil {{ c.couleur }}">{{ c.conseil }}</div>
 
-{% for a in d.alertes %}
+{% for a in c.alertes %}
 <div class="alerte {{ a.cls }}">{{ a.txt }}</div>
 {% endfor %}
 
 {% if d.guide %}
 {% set g = d.guide %}
-<div class="guide vert">
-<div class="guide-titre">🧭 Guide du trade : {{ g.sens }}</div>
+<div class="guide {{ g.feu }}">
+<div class="guide-titre">🧭 Guide du trade : {{ g.sens }} —
+{% if g.feu == 'vert' %}✅ tu peux entrer{% else %}⏳ attends, conditions pas idéales{% endif %}</div>
+{% if g.raisons %}
+<ul class="raisons">{% for r in g.raisons %}<li>{{ r }}</li>{% endfor %}</ul>
+{% endif %}
 <ol class="etapes">
 <li><b>Avant d'entrer :</b> si une grosse annonce arrive dans l'heure (inflation, emploi américain, banque centrale), alors n'entre pas.</li>
 <li><b>Quand :</b> à la clôture de la bougie M5, vers <b>{{ g.heure }}</b> (heure du Bénin). Si le signal a disparu à ce moment, alors n'entre pas.</li>
-<li><b>Ordre :</b> {{ g.sens }} au marché, autour de <b>{{ g.prix }}</b>.</li>
+<li><b>Ordre :</b> {{ 'ACHAT' if g.sens == 'ACHAT' else 'VENTE' }} au marché, autour de <b>{{ g.prix }}</b>.</li>
+{% if g.stop %}
 <li><b>Stop loss :</b> <b>{{ g.stop }}</b>. Mets-le tout de suite et ne l'éloigne jamais.</li>
 <li><b>Objectif :</b> <b>{{ g.objectif }}</b> (ratio gain/risque {{ g.ratio }}).</li>
 <li><b>Lot :</b> <span class="lotbox" data-dist="{{ g.dist }}" data-gain="{{ g.dist_obj }}" data-contrat="{{ g.contrat or '' }}"><span class="lotres">Entre ton capital en haut de la page.</span></span></li>
 <li><b>Si le prix atteint {{ g.moitie }}</b> (la moitié du chemin) : alors tu peux remonter ton stop à ton prix d'entrée, pour ne plus perdre.</li>
+{% else %}
+<li><b>Stop et objectif :</b> pas de niveaux clairs pour le moment, donc n'entre pas.</li>
+{% endif %}
 <li><b>Si ça tourne mal :</b> si le stop est touché, alors accepte la perte et n'entre pas tout de suite de nouveau. Si la tendance H1 s'inverse avant l'objectif, alors tu peux fermer à la main.</li>
 <li><b>Règles de prudence :</b> 1 % du capital au maximum par trade. Après 2 pertes de suite dans la journée, arrête-toi.</li>
 </ol>
@@ -77,39 +82,11 @@
 </div>
 {% endif %}
 
-<div class="conseil {{ c.couleur }}">{{ c.conseil }}</div>
-
 <div class="conditions-row">
 {% for k, v in c.details.items() %}
 <span class="cond {% if v %}ok{% else %}ko{% endif %}">{{ '✅' if v else '❌' }} {{ k }}</span>
 {% endfor %}
 </div>
-
-<h3>🧪 Test sur le passé : 4 modes comparés</h3>
-{% if d.bt %}
-<div class="scroll">
-<table>
-<thead><tr><th>Mode</th><th>Trades</th><th>Gain moyen</th><th>Gagnants</th><th>1re partie</th><th>2e partie</th><th>Verdict</th></tr></thead>
-<tbody>
-{% for md in d.bt.modes %}
-<tr class="{{ 'best' if d.bt.meilleur == md.key }}">
-<td><b>{{ md.label }}</b></td>
-<td>{{ md.n }}</td>
-<td class="{{ md.couleur }}">{% if md.avg is not none %}{{ '%+.2f'|format(md.avg) }} R{% else %}—{% endif %}</td>
-<td>{% if md.wr is not none %}{{ md.wr }}%{% else %}—{% endif %}</td>
-<td>{% if md.train is not none %}{{ '%+.2f'|format(md.train) }} R <span class="pct">({{ md.n_train }})</span>{% else %}—{% endif %}</td>
-<td>{% if md.test is not none %}{{ '%+.2f'|format(md.test) }} R <span class="pct">({{ md.n_test }})</span>{% else %}—{% endif %}</td>
-<td>{{ '✅ validé' if md.valide else '❌ non validé' }}</td>
-</tr>
-{% endfor %}
-</tbody>
-</table>
-</div>
-<div class="note">Période testée : environ {{ d.bt.heures }} h de bougies M5. R = ce que tu risques sur un trade : un gain moyen de +0.30 R veut dire que tu gagnes en moyenne 0,3 fois ta mise de risque, spread déduit (spread supposé : {{ d.bt.spread }}, modifiable dans app.py).<br>
-Validé = au moins {{ d.bt.min_trades }} trades, gain moyen au-dessus de +0.10 R, et positif sur les 2 moitiés de la période. Si aucun mode n'est validé, alors le dashboard dit de ne pas entrer. Le passé ne garantit pas le futur.</div>
-{% else %}
-<div class="note">Pas assez de données pour tester le signal sur le passé.</div>
-{% endif %}
 
 {% if s %}
 <h3>📈 Statistiques générales</h3>
@@ -133,7 +110,7 @@ Validé = au moins {{ d.bt.min_trades }} trades, gain moyen au-dessus de +0.10 R
 <h3>🎯 Stop & objectif (si tu entres maintenant)</h3>
 <div class="duo">
 {% for nom, cote in [('ACHAT', d.sltp.achat), ('VENTE', d.sltp.vente)] %}
-<div class="bloc {{ 'actif' if vd.sens == nom and vd.etat == 'entrer' }}">
+<div class="bloc {{ 'actif' if c.signal == nom }}">
 <b class="{{ 'vert' if nom == 'ACHAT' else 'rouge' }}">{{ nom }}</b>
 {% if cote %}
 <div>Stop : <b>{{ cote.stop }}</b> <span class="pct">(risque {{ cote.risque_pct }}%)</span></div>
@@ -170,6 +147,22 @@ Validé = au moins {{ d.bt.min_trades }} trades, gain moyen au-dessus de +0.10 R
 </div>
 {% endif %}
 
+<h3>🧪 Test sur le passé</h3>
+{% if d.bt %}
+{% set b = d.bt %}
+<div class="stats">
+<div class="tile"><small>Signaux trouvés</small><b>{{ b.n }}</b> <em class="etat">sur ≈ {{ b.heures }} h</em></div>
+<div class="tile"><small>Bon sens après 1 h</small><b class="{{ b.couleur }}">{% if b.pct is not none %}{{ b.pct }}%{% else %}—{% endif %}</b></div>
+<div class="tile"><small>ACHAT dans le bon sens</small><b>{{ b.achat_w }}/{{ b.achat_n }}</b></div>
+<div class="tile"><small>VENTE dans le bon sens</small><b>{{ b.vente_w }}/{{ b.vente_n }}</b></div>
+<div class="tile"><small>Avec stop & objectif</small><b>{{ b.sim_tp }} gagnés · {{ b.sim_sl }} perdus</b><div class="sous">{{ b.sim_to }} sortis sans toucher (4 h)</div></div>
+<div class="tile"><small>Gain moyen par trade</small><b class="{{ b.sim_couleur }}">{% if b.sim_r is not none %}{{ '%+.2f'|format(b.sim_r) }} R{% else %}—{% endif %}</b><div class="sous">sur {{ b.sim_n }} trades simulés</div></div>
+</div>
+<div class="note">{{ b.verdict }}<br>{{ b.sim_verdict }}<br>1 R = ce que tu risques sur un trade. Si +1 R, alors tu gagnes autant que ce que tu risquais. Le test ne compte pas le spread.</div>
+{% else %}
+<div class="note">Pas assez de données pour tester le signal sur le passé.</div>
+{% endif %}
+
 <h3>⏱️ Analyse par timeframe</h3>
 <div class="scroll">
 <table>
@@ -201,20 +194,20 @@ Validé = au moins {{ d.bt.min_trades }} trades, gain moyen au-dessus de +0.10 R
 <details class="aide">
 <summary>ℹ️ Comment lire</summary>
 <ul>
-<li>Verdict final : si il dit « Entre », alors le mode de signal est validé sur le passé pour cette devise, son signal est actif, et aucune alerte jaune n'est présente.</li>
-<li>Si le verdict dit « Aucun mode », alors n'entre pas : le signal n'a pas prouvé qu'il marche sur cette devise.</li>
-<li>Les 4 modes : Strict = H1, M30, M15 et EMA M5 dans le même sens. Souple = H1, M15 et EMA M5. « + filtres » écarte les cas où l'EMA est croisée depuis plus de 12 bougies, où la bougie M5 est 2 fois trop grande, ou où le ratio gain/risque est sous 1,5.</li>
-<li>Gain moyen en R : 1 R = ce que tu risques sur un trade. Si +0.30 R, alors tu gagnes en moyenne 0,3 fois ta mise de risque par trade.</li>
-<li>Validé = au moins 12 trades, gain moyen au-dessus de +0.10 R, et positif sur les 2 moitiés de la période. Le passé ne garantit pas le futur.</li>
+<li>Signal « détecté » : les timeframes vont dans le même sens. Ce n'est pas une garantie que le prix continue.</li>
+<li>Si le guide est vert, alors les alertes jaunes sont absentes. Si le guide est orange, alors lis les raisons et attends.</li>
 <li>Ach. / Ven. = % de bougies vertes / rouges sur les 10 dernières.</li>
 <li>Agit. = part du mouvement perdue en allers-retours. Si c'est haut, alors le marché est indécis.</li>
 <li>Div. : H = divergence haussière, B = divergence baissière, — = aucune.</li>
 <li>« N bg » = nombre de bougies depuis le croisement EMA ou la cassure. Si N est grand, alors l'entrée est tardive.</li>
 <li>Cassure : le prix a fermé au-dessus du plus haut (↑) ou sous le plus bas (↓) des 20 bougies d'avant. Elle peut être fausse.</li>
 <li>Mèche basse : les vendeurs ont essayé de pousser et ont échoué. Mèche haute : l'inverse. Ce sont des indices, pas des preuves.</li>
-<li>Stop : sous le dernier creux (achat) ou au-dessus du dernier sommet (vente).</li>
+<li>Englobante : la dernière bougie avale entièrement la précédente (possible retournement).</li>
+<li>Grande ×N : la bougie est N fois plus grande que la moyenne. Si N ≥ 2, alors attends.</li>
+<li>Stop : sous le dernier creux (achat) ou au-dessus du dernier sommet (vente). Si le ratio est sous 1,5, alors le trade ne vaut pas le coup.</li>
 <li>Lot : calculé pour un compte en dollars (EURUSD, GBPUSD, or). Vérifie avec le calculateur de ta plateforme avant d'entrer. Pour V75, le lot n'est pas calculé.</li>
-<li>🔔 Son : si tu l'actives, alors un bip et une vibration t'avertissent quand le verdict passe à « Entre », tant que la page reste ouverte. Si l'écran du téléphone est verrouillé, alors rien ne sonne.</li>
+<li>Test sur le passé : c'est une indication, pas une garantie. Si le nombre de trades est petit, alors le résultat n'est pas sûr. Le spread n'est pas compté.</li>
+<li>🔔 Son : si tu l'actives, alors un bip et une vibration t'avertissent d'un nouveau signal tant que la page reste ouverte. Si l'écran du téléphone est verrouillé, alors rien ne sonne.</li>
 <li>Toutes les bougies en cours sont ignorées : seules les bougies clôturées comptent.</li>
 </ul>
 </details>
