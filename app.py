@@ -46,16 +46,6 @@ TIMING_FRAIS_MAX = 5
 TIMING_MOYEN_MAX = 12
 HTTP_TIMEOUT = 6
 
-# ═══════════════════════════════════════════════════════
-# SEUILS DES MOTIFS DE CONTINUATION (basés sur Bulkowski)
-# ═══════════════════════════════════════════════════════
-SEUILS_MOTIFS = {
-    "rising_three": 0.02,       # écart max entre les 3 petites bougies
-    "separating": 0.015,        # écart max pour separating lines
-    "deliberation": 0.01,       # petite bougie avant continuation
-    "three_line_strike": 0.005, # écart max pour 3 line strike
-}
-
 
 def logged():
     return session.get("admin") is True
@@ -196,14 +186,11 @@ def calc_rsi(bougies, periode=14):
     for i in range(1, len(clotures)):
         diff = clotures[i] - clotures[i - 1]
         if diff > 0:
-            gains.append(diff)
-            pertes.append(0.0)
+            gains.append(diff); pertes.append(0.0)
         elif diff < 0:
-            gains.append(0.0)
-            pertes.append(abs(diff))
+            gains.append(0.0); pertes.append(abs(diff))
         else:
-            gains.append(0.0)
-            pertes.append(0.0)
+            gains.append(0.0); pertes.append(0.0)
     if len(gains) < periode:
         return 50.0
     gain_moy = float(np.mean(gains[:periode]))
@@ -214,8 +201,7 @@ def calc_rsi(bougies, periode=14):
     if perte_moy == 0:
         return 100.0
     rs = gain_moy / perte_moy
-    rsi = 100 - (100 / (1 + rs))
-    return round(rsi, 1)
+    return round(100 - (100 / (1 + rs)), 1)
 
 
 def calc_agitation(bougies, periode=10):
@@ -280,144 +266,80 @@ def mouvement_moyen(bougies, n=24):
 
 
 # ═══════════════════════════════════════════════════════
-# MOTIFS DE CONTINUATION RÉPUTÉS (Bulkowski)
+# DÉCLENCHEUR : SIGNAUX VISUELS DE BOUGIES
+# Basé sur les 5 dernières bougies M5
 # ═══════════════════════════════════════════════════════
 
-def motif_rising_three_methods(bougies):
-    """Rising Three Methods (79% succès) : 1 grande verte, 3 petites rouges, 1 grande verte."""
+def detecter_signal_bougies(bougies):
+    """Détecte un signal d'entrée par les bougies.
+    Retourne: (sens, type_signal, fiabilite, description) ou None.
+    Priorité: grande bougie > englobante > 3 bougies successives."""
     if len(bougies) < 5:
         return None
-    b = bougies[-5:]
-    # 1ère bougie : grande verte
-    if b[0]["close"] <= b[0]["open"]:
-        return None
-    # 3 petites rouges
-    for i in range(1, 4):
-        if b[i]["close"] >= b[i]["open"]:
-            return None
-        # corps petit
-        corps = abs(b[i]["close"] - b[i]["open"])
-        rng = b[i]["high"] - b[i]["low"]
-        if rng > 0 and corps / rng > 0.4:
-            return None
-    # Dernière grande verte qui dépasse la 1ère
-    if b[4]["close"] <= b[4]["open"]:
-        return None
-    if b[4]["close"] > b[0]["close"]:
-        return {"nom": "Rising Three Methods", "sens": "haussier", "fiabilite": 79,
-                "desc": "3 petites bougies rouges après une grande verte, puis cassure haussière"}
+
+    # Taille moyenne des 20 dernières bougies (référence)
+    recent = bougies[-21:-1]
+    moy_rng = float(np.mean([b["high"] - b["low"] for b in recent])) if recent else 0.0
+
+    # On regarde les 5 dernières bougies
+    d = bougies[-5:]
+
+    # PRIORITÉ 1 : Grande bougie (×2 la moyenne) dans les 2 dernières
+    for k in range(0, 2):
+        b = d[-(k + 1)]
+        rng = b["high"] - b["low"]
+        if moy_rng > 0 and rng / moy_rng >= 2:
+            if b["close"] > b["open"]:
+                return {"sens": "haussier", "type": "Grande bougie verte",
+                        "fiabilite": 75, "taille": round(rng / moy_rng, 1),
+                        "il_y_a": k, "desc": f"Grande bougie verte (×{round(rng/moy_rng,1)}) — signal fort haussier"}
+            elif b["close"] < b["open"]:
+                return {"sens": "baissier", "type": "Grande bougie rouge",
+                        "fiabilite": 75, "taille": round(rng / moy_rng, 1),
+                        "il_y_a": k, "desc": f"Grande bougie rouge (×{round(rng/moy_rng,1)}) — signal fort baissier"}
+
+    # PRIORITÉ 2 : Englobante (avale la précédente) dans les 2 dernières
+    for k in range(0, 2):
+        idx = len(d) - 1 - k
+        if idx < 1:
+            continue
+        b = d[idx]
+        p = d[idx - 1]
+        # Englobante haussière : verte qui avale une rouge
+        if p["close"] < p["open"] and b["close"] > b["open"]:
+            if b["open"] <= p["close"] and b["close"] >= p["open"]:
+                return {"sens": "haussier", "type": "Englobante haussière",
+                        "fiabilite": 63, "taille": 0, "il_y_a": k,
+                        "desc": "Englobante haussière — la bougie verte avale la rouge précédente"}
+        # Englobante baissière : rouge qui avale une verte
+        if p["close"] > p["open"] and b["close"] < b["open"]:
+            if b["open"] >= p["close"] and b["close"] <= p["open"]:
+                return {"sens": "baissier", "type": "Englobante baissière",
+                        "fiabilite": 63, "taille": 0, "il_y_a": k,
+                        "desc": "Englobante baissière — la bougie rouge avale la verte précédente"}
+
+    # PRIORITÉ 3 : 3 bougies successives dans le même sens
+    trois = d[-3:]
+    if len(trois) == 3:
+        # 3 vertes d'affilée
+        if all(b["close"] > b["open"] for b in trois):
+            # Vérifier que chaque bougie ferme plus haut que la précédente
+            if trois[0]["close"] < trois[1]["close"] < trois[2]["close"]:
+                return {"sens": "haussier", "type": "3 bougies vertes",
+                        "fiabilite": 78, "taille": 0, "il_y_a": 0,
+                        "desc": "3 soldats blancs — 3 bougies vertes successives de plus en plus hautes"}
+        # 3 rouges d'affilée
+        if all(b["close"] < b["open"] for b in trois):
+            if trois[0]["close"] > trois[1]["close"] > trois[2]["close"]:
+                return {"sens": "baissier", "type": "3 bougies rouges",
+                        "fiabilite": 78, "taille": 0, "il_y_a": 0,
+                        "desc": "3 corbeaux noirs — 3 bougies rouges successives de plus en plus basses"}
+
     return None
-
-
-def motif_falling_three_methods(bougies):
-    """Falling Three Methods : 1 grande rouge, 3 petites vertes, 1 grande rouge."""
-    if len(bougies) < 5:
-        return None
-    b = bougies[-5:]
-    if b[0]["close"] >= b[0]["open"]:
-        return None
-    for i in range(1, 4):
-        if b[i]["close"] <= b[i]["open"]:
-            return None
-        corps = abs(b[i]["close"] - b[i]["open"])
-        rng = b[i]["high"] - b[i]["low"]
-        if rng > 0 and corps / rng > 0.4:
-            return None
-    if b[4]["close"] >= b[4]["open"]:
-        return None
-    if b[4]["close"] < b[0]["close"]:
-        return {"nom": "Falling Three Methods", "sens": "baissier", "fiabilite": 79,
-                "desc": "3 petites bougies vertes après une grande rouge, puis cassure baissière"}
-    return None
-
-
-def motif_separating_lines(bougies):
-    """Separating Lines (76% succès) : continuation après pullback."""
-    if len(bougies) < 3:
-        return None
-    b = bougies[-3:]
-    # Bougie 1 et 2 : même sens (tendance)
-    if b[0]["close"] > b[0]["open"] and b[1]["close"] > b[1]["open"]:
-        # Bougie 3 : rouge qui ouvre près de l'ouverture de la bougie 2
-        if b[2]["close"] < b[2]["open"]:
-            ecart = abs(b[2]["open"] - b[1]["open"]) / b[1]["open"]
-            if ecart < SEUILS_MOTIFS["separating"]:
-                return {"nom": "Bearish Separating Lines", "sens": "haussier", "fiabilite": 76,
-                        "desc": "Ligne de séparation après 2 vertes, reprise haussière probable"}
-    if b[0]["close"] < b[0]["open"] and b[1]["close"] < b[1]["open"]:
-        if b[2]["close"] > b[2]["open"]:
-            ecart = abs(b[2]["open"] - b[1]["open"]) / b[1]["open"]
-            if ecart < SEUILS_MOTIFS["separating"]:
-                return {"nom": "Bullish Separating Lines", "sens": "baissier", "fiabilite": 76,
-                        "desc": "Ligne de séparation après 2 rouges, reprise baissière probable"}
-    return None
-
-
-def motif_deliberation(bougies):
-    """Deliberation (75% succès) : grande bougie + 2 petites + grande bougie."""
-    if len(bougies) < 4:
-        return None
-    b = bougies[-4:]
-    # Grande bougie 1
-    rng1 = b[0]["high"] - b[0]["low"]
-    corps1 = abs(b[0]["close"] - b[0]["open"])
-    if rng1 <= 0 or corps1 / rng1 < 0.7:
-        return None
-    # 2 petites bougies
-    for i in range(1, 3):
-        rng = b[i]["high"] - b[i]["low"]
-        corps = abs(b[i]["close"] - b[i]["open"])
-        if rng <= 0 or corps / rng > 0.3:
-            return None
-    # Dernière grande bougie même sens
-    rng3 = b[3]["high"] - b[3]["low"]
-    corps3 = abs(b[3]["close"] - b[3]["open"])
-    if rng3 <= 0 or corps3 / rng3 < 0.7:
-        return None
-    if b[0]["close"] > b[0]["open"] and b[3]["close"] > b[3]["open"]:
-        return {"nom": "Bullish Deliberation", "sens": "haussier", "fiabilite": 75,
-                "desc": "Grande verte, 2 petites hésitations, grande verte de reprise"}
-    if b[0]["close"] < b[0]["open"] and b[3]["close"] < b[3]["open"]:
-        return {"nom": "Bearish Deliberation", "sens": "baissier", "fiabilite": 75,
-                "desc": "Grande rouge, 2 petites hésitations, grande rouge de reprise"}
-    return None
-
-
-def motif_three_line_strike(bougies):
-    """Three Line Strike : 3 bougies dans un sens + 1 grande bougie inverse."""
-    if len(bougies) < 4:
-        return None
-    b = bougies[-4:]
-    if b[0]["close"] > b[0]["open"] and b[1]["close"] > b[1]["open"] and b[2]["close"] > b[2]["open"]:
-        if b[3]["close"] < b[3]["open"]:
-            # La grande bougie rouge doit englober les 3 précédentes
-            if b[3]["close"] < b[0]["open"] and b[3]["open"] > b[2]["close"]:
-                return {"nom": "Bullish Three Line Strike", "sens": "haussier", "fiabilite": 65,
-                        "desc": "3 vertes suivies d'une grande rouge (faux signal) → reprise haussière"}
-    if b[0]["close"] < b[0]["open"] and b[1]["close"] < b[1]["open"] and b[2]["close"] < b[2]["open"]:
-        if b[3]["close"] > b[3]["open"]:
-            if b[3]["close"] > b[0]["open"] and b[3]["open"] < b[2]["close"]:
-                return {"nom": "Bearish Three Line Strike", "sens": "baissier", "fiabilite": 65,
-                        "desc": "3 rouges suivies d'une grande verte (faux signal) → reprise baissière"}
-    return None
-
-
-def detecter_motifs_continuation(bougies):
-    """Retourne la liste des motifs de continuation détectés."""
-    motifs = []
-    for f in [motif_rising_three_methods, motif_falling_three_methods,
-              motif_separating_lines, motif_deliberation, motif_three_line_strike]:
-        try:
-            m = f(bougies)
-            if m:
-                motifs.append(m)
-        except Exception:
-            pass
-    return motifs
 
 
 def calc_motifs_classiques(bougies):
-    """Mèches de rejet, englobante, bougie anormale."""
+    """Mèches de rejet, englobante (info), grande bougie."""
     if len(bougies) < 2:
         return [], False, 0, False, False
     b, p = bougies[-1], bougies[-2]
@@ -466,7 +388,6 @@ def analyser(tf, bougies):
     if len(bougies) < 30:
         return None
     clotures = [b["close"] for b in bougies]
-
     per_tend = PERIODE_TENDANCE.get(tf, 15)
     per_rsi = RSI_PERIODE.get(tf, 14)
 
@@ -478,7 +399,7 @@ def analyser(tf, bougies):
     divergence = calc_divergence(bougies, creux, sommets)
     ema5, ema25, ema_sig, ema_depuis = calc_ema_signal(clotures)
     motifs, grande, taille_x, mh, mb = calc_motifs_classiques(bougies)
-    continuation = detecter_motifs_continuation(bougies)
+    signal_bougies = detecter_signal_bougies(bougies) if tf == "M5" else None
 
     pa = round(rsi, 1)
     pv = round(100 - rsi, 1)
@@ -493,26 +414,27 @@ def analyser(tf, bougies):
         "ema5": ema5, "ema25": ema25, "ema_signal": ema_sig, "ema_depuis": ema_depuis,
         "motifs": motifs, "grande": grande, "taille_x": taille_x,
         "motif_haussier": mh, "motif_baissier": mb,
-        "continuation": continuation,
+        "signal_bougies": signal_bougies,
         "cassure": calc_cassure(bougies),
         "prix": clotures[-1]
     }
 
 
-def calc_timing_entree(m5):
-    if not m5 or m5.get("ema_depuis") is None:
+def calc_timing_entree(signal_bougies):
+    """Le timing est basé sur le signal des bougies."""
+    if not signal_bougies:
         return None
-    dep = m5["ema_depuis"]
-    if dep <= TIMING_FRAIS_MAX:
+    il_y_a = signal_bougies.get("il_y_a", 0)
+    if il_y_a <= 1:
         return {"niveau": "FRAIS", "couleur": "vert", "emoji": "🔥",
-                "txt": f"Croisement EMA M5 très récent ({dep} bougies). Tu entres au début du mouvement.",
+                "txt": f"Signal bougies très récent ({il_y_a} bougie(s)). Tu entres au début du mouvement.",
                 "lot_conseil": "LOT PLEIN", "lot_ratio": 1.0}
-    if dep <= TIMING_MOYEN_MAX:
+    if il_y_a <= 2:
         return {"niveau": "EN COURS", "couleur": "jaune", "emoji": "⏳",
-                "txt": f"Croisement EMA M5 il y a {dep} bougies. Le mouvement est déjà lancé.",
+                "txt": f"Signal bougies il y a {il_y_a} bougies. Le mouvement est lancé.",
                 "lot_conseil": "DEMI-LOT", "lot_ratio": 0.5}
     return {"niveau": "TARDIF", "couleur": "rouge", "emoji": "❌",
-            "txt": f"Croisement EMA M5 il y a {dep} bougies. Le mouvement est trop avancé.",
+            "txt": f"Signal bougies il y a {il_y_a} bougies. Trop tardif.",
             "lot_conseil": "ATTENDRE", "lot_ratio": 0.0}
 
 
@@ -536,8 +458,6 @@ def calc_tendance_generale(tfs):
     if poids_total == 0:
         return None
     rsi_gen = round(somme_rsi / poids_total, 1)
-    pa_gen = rsi_gen
-    pv_gen = round(100 - rsi_gen, 1)
     score_pct_brut = score / poids_total * 100
     sens_list = [t["tendance"] for t in tfs.values()]
     nb_haut = sum(1 for s in sens_list if s == "haussier")
@@ -579,18 +499,6 @@ def calc_tendance_generale(tfs):
         align_sens, align_n = "baissier", alignement["baissier"]
     else:
         align_sens, align_n = None, 0
-    confirmation = None
-    trois = ["M15", "M30", "H1"]
-    if all(tf in tfs for tf in trois) and "M5" in tfs:
-        m15, m30, h1, m5 = tfs["M15"], tfs["M30"], tfs["H1"], tfs["M5"]
-        if m15["tendance"] == m30["tendance"] == h1["tendance"] == "haussier":
-            if m5["ema_signal"] == "haussier" and (m5["ema_depuis"] or 99) <= 3:
-                confirmation = {"sens": "ACHAT", "couleur": "vert",
-                                "txt": "M15+M30+H1 haussiers + croisement EMA M5 haussier récent."}
-        elif m15["tendance"] == m30["tendance"] == h1["tendance"] == "baissier":
-            if m5["ema_signal"] == "baissier" and (m5["ema_depuis"] or 99) <= 3:
-                confirmation = {"sens": "VENTE", "couleur": "rouge",
-                                "txt": "M15+M30+H1 baissiers + croisement EMA M5 baissier récent."}
     votes_detail = []
     for tf in ORDRE_TF:
         if tf in tfs:
@@ -598,21 +506,13 @@ def calc_tendance_generale(tfs):
             v = 1 if tfs[tf]["tendance"] == "haussier" else (-1 if tfs[tf]["tendance"] == "baissier" else 0)
             votes_detail.append({"tf": tf, "vote": v, "poids": p, "contribution": v * p,
                                  "rsi": tfs[tf]["rsi"]})
-    # Collecter tous les motifs de continuation détectés
-    continuations = []
-    for tf in ORDRE_TF:
-        if tf in tfs:
-            for m in tfs[tf]["continuation"]:
-                continuations.append({**m, "tf": tf})
-    return {"rsi_gen": rsi_gen, "ach_gen": pa_gen, "ven_gen": pv_gen,
+    return {"rsi_gen": rsi_gen, "ach_gen": rsi_gen, "ven_gen": round(100 - rsi_gen, 1),
             "score_pct": score_pct, "score_brut": round(score_pct_brut, 1),
             "bonus": bonus,
             "tendance": tendance, "couleur": couleur,
             "align_sens": align_sens, "align_n": align_n,
             "align_detail": alignement["detail"],
-            "confirmation": confirmation,
-            "votes_detail": votes_detail,
-            "continuations": continuations}
+            "votes_detail": votes_detail}
 
 
 def session_actuelle():
@@ -628,102 +528,132 @@ def session_actuelle():
     return {"heure": h, "qualite": "faible", "nom": "Nuit", "txt": "Nuit (marché calme)"}
 
 
-# ───────────── MOTEUR DE CONSEILS ─────────────
+# ───────────── CONDITIONS D'ENTRÉE ─────────────
 
-def generer_conseil(pair, d, session_act, autres_cond, historique):
-    tfs = d["tfs"]
-    cond = d["cond"]
-    gen = d["generale"]
-    niv = d["niv"]
-    sltp = d["sltp"]
-    bt = d["bt"]
-    raisons = []
+def conditions_paire(tfs, ferme=False, generale=None):
+    """Conditions basées sur les SIGNAUX BOUGIES maintenant."""
+    manque = [k for k in ["H1", "M30", "M15", "M5"] if k not in tfs]
+    if manque:
+        return {"signal": "?", "couleur": "jaune", "bonus": False,
+                "conseil": "Données manquantes : " + ", ".join(manque),
+                "details": {}, "alertes": [], "generale": generale, "timing": None,
+                "signal_bougies": None}
+    h1, m30, m15, m5 = tfs["H1"], tfs["M30"], tfs["M15"], tfs["M5"]
+    h4 = tfs.get("H4")
+    sig_b = m5.get("signal_bougies")
+
+    # Pas de signal bougies → on ne peut pas entrer
+    if not sig_b:
+        conseil = "⏸️ Aucun signal de bougie visible sur M5. Attends 3 bougies successives, une grande bougie, ou une englobante."
+        return {"signal": "ATTENDRE", "couleur": "jaune", "bonus": False,
+                "conseil": conseil, "details": {}, "alertes": [],
+                "generale": generale, "timing": None, "signal_bougies": None}
+
+    sens = sig_b["sens"]
+    achat = sens == "haussier"
+
+    # Vérifier l'alignement des 3 TF avec le sens du signal bougies
+    def verifier(s):
+        if s == "haussier":
+            fl, lab = "↑", "RSI>50"
+        else:
+            fl, lab = "↓", "RSI<50"
+        d = {}
+        for nom, t in (("H1", h1), ("M30", m30), ("M15", m15)):
+            d[f"{nom} {fl}"] = t["tendance"] == s
+        for nom, t in (("H1", h1), ("M30", m30), ("M15", m15)):
+            if s == "haussier":
+                d[f"{lab} {nom}"] = t["rsi"] > 50
+            else:
+                d[f"{lab} {nom}"] = t["rsi"] < 50
+        # Signal bougies dans le bon sens
+        d[f"M5 signal {fl}"] = m5["signal_bougies"] is not None and m5["signal_bougies"]["sens"] == s
+        bonus = bool(h4 and h4["tendance"] == s)
+        return d, bonus, fl
+
+    d, bonus, fl = verifier(sens)
+    timing = calc_timing_entree(sig_b)
+    nom = "ACHAT" if achat else "VENTE"
+    couleur = "vert" if achat else "rouge"
+
+    if all(d.values()):
+        conseil = f"✅ Signal {nom} par bougies : {sig_b['type']}. H1, M30, M15 alignés {sens}s + RSI confirme."
+        if bonus:
+            conseil = f"⭐ Signal {nom} renforcé : {sig_b['type']}. H4 aussi dans le même sens."
+        return {"signal": nom, "couleur": couleur, "bonus": bonus,
+                "conseil": conseil, "details": {**d, f"H4 {fl}": bonus},
+                "timing": timing, "signal_bougies": sig_b}
+
+    # Signal bougies existe mais les 3 TF ne sont pas alignés
+    manque_c = [k for k, v in d.items() if not v]
+    ok = len(d) - len(manque_c)
+    conseil = f"⚠️ Signal {nom} par bougies MAIS {ok}/{len(d)} conditions. Manque : {', '.join(manque_c[:4])}."
+    return {"signal": "ATTENDRE", "couleur": "jaune", "bonus": False,
+            "conseil": conseil, "details": {**d, f"H4 {fl}": bonus},
+            "timing": timing, "signal_bougies": sig_b}
+
+
+def alertes_signal(cond, tfs, niv, sltp, bt, mm_h1):
     sig = cond["signal"]
-    if not tfs or not gen:
-        return {"verdict": "PAS DE DONNÉES", "couleur": "gris", "action": "ATTENDRE",
-                "message": f"Je n'ai pas assez de données sur {pair} pour te conseiller.",
-                "raisons": ["Données insuffisantes ou marché fermé."]}
     if sig not in ("ACHAT", "VENTE"):
-        manque = [k for k, v in cond.get("details", {}).items() if not v]
-        msg = f"Pas de signal sur {pair}. Le marché n'est pas aligné."
-        if manque:
-            msg += f" Il manque : {', '.join(manque[:3])}{'...' if len(manque) > 3 else ''}."
-        return {"verdict": "ATTENDRE", "couleur": "gris", "action": "NE RIEN FAIRE",
-                "message": msg, "raisons": ["Aucun signal complet détecté."]}
-    timing = cond.get("timing")
+        return []
+    al = []
     achat = sig == "ACHAT"
-    if session_act["qualite"] == "faible":
-        raisons.append(f"Session {session_act['nom']} : peu de volume, signaux peu fiables.")
+    m5, m15 = tfs["M5"], tfs["M15"]
+    prix = m5["prix"]
+    if achat and niv and niv["res_brut"] is not None and niv["res_brut"] - prix < mm_h1:
+        al.append({"txt": f"Résistance proche ({niv['res']}).", "cls": "jaune"})
+    if not achat and niv and niv["sup_brut"] is not None and prix - niv["sup_brut"] < mm_h1:
+        al.append({"txt": f"Support proche ({niv['sup']}).", "cls": "jaune"})
+    if m5["rsi"] > 80:
+        al.append({"txt": f"RSI M5 suracheté ({m5['rsi']}).", "cls": "jaune"})
+    if m5["rsi"] < 20:
+        al.append({"txt": f"RSI M5 survendu ({m5['rsi']}).", "cls": "jaune"})
+    if sltp:
+        cote = sltp["achat" if achat else "vente"]
+        if cote is None:
+            al.append({"txt": "Pas d'objectif clair.", "cls": "jaune"})
+        elif cote["ok"]:
+            al.append({"txt": f"Ratio {cote['ratio']}.", "cls": "vert"})
+        else:
+            al.append({"txt": f"Ratio {cote['ratio']} sous 1,5.", "cls": "jaune"})
+    return al
+
+
+def construire_guide(pair, cond, tfs, sltp):
+    sig = cond["signal"]
+    if sig not in ("ACHAT", "VENTE") or not sltp:
+        return None
+    achat = sig == "ACHAT"
+    cote = sltp["achat" if achat else "vente"]
+    prix = tfs["M5"]["prix"]
+    nxt = (int(time.time() // 300) + 1) * 300
+    timing = cond.get("timing")
+    feu = "vert"
+    lot_niveau = "PLEIN"
+    lot_txt = "Lot plein autorisé."
     if timing:
         if timing["niveau"] == "EN COURS":
-            raisons.append(f"Timing d'entrée EN COURS ({tfs['M5']['ema_depuis']} bougies).")
+            feu = "orange"
+            lot_niveau = "DEMI"
+            lot_txt = "Demi-lot conseillé."
         elif timing["niveau"] == "TARDIF":
-            raisons.append(f"Timing d'entrée TARDIF ({tfs['M5']['ema_depuis']} bougies). Mouvement trop avancé.")
-    h4 = tfs.get("H4")
-    h1 = tfs.get("H1")
-    contre = "baissier" if achat else "haussier"
-    h4_contre = h4 and h4["tendance"] == contre
-    h1_contre = h1 and h1["tendance"] == contre
-    if h4_contre and h1_contre:
-        raisons.append(f"H4 ET H1 sont {contre}s (contre ton signal). Pullback dans une tendance inverse.")
-    elif h4_contre:
-        raisons.append(f"H4 est {contre} (contre ton signal). Le fond est contre toi.")
-    elif h1_contre:
-        raisons.append(f"H1 est {contre} (contre ton signal). La tendance horaire n'est pas retournée.")
-    h1_data = tfs.get("H1")
-    if h1_data and h1_data.get("pct_agitation", 0) > SEUIL_AGITATION_MAX:
-        raisons.append(f"Marché trop agité (agitation H1 {h1_data['pct_agitation']}%).")
-    rsi_m5 = tfs["M5"]["rsi"]
-    if achat and rsi_m5 > 80:
-        raisons.append(f"RSI M5 en excès haussier ({rsi_m5}) : risque de retournement imminent.")
-    if not achat and rsi_m5 < 20:
-        raisons.append(f"RSI M5 en excès baissier ({rsi_m5}) : risque de rebond imminent.")
-    cote = sltp["achat" if achat else "vente"] if sltp else None
-    if cote is None:
-        raisons.append("Pas d'objectif clair devant le prix.")
-    elif not cote["ok"]:
-        raisons.append(f"Ratio gain/risque faible ({cote['ratio']}, sous 1,5).")
-    m5 = tfs["M5"]
-    if m5["grande"]:
-        raisons.append(f"Grosse bougie M5 (×{m5['taille_x']}). Le mouvement est déjà fait d'un coup.")
-    if niv and h1_data:
-        mm = h1_data["prix"] * 0.001
-        if achat and niv["res_brut"] is not None and niv["res_brut"] - m5["prix"] < mm:
-            raisons.append(f"Résistance proche ({niv['res']}).")
-        if not achat and niv["sup_brut"] is not None and m5["prix"] - niv["sup_brut"] < mm:
-            raisons.append(f"Support proche ({niv['sup']}).")
-    if historique:
-        maintenant = time.time()
-        for h in reversed(historique):
-            if h["pair"] == pair and h["sens"] == sig:
-                age = (maintenant - h["t"]) / 60
-                if age < DUREE_SIGNAL_MIN:
-                    raisons.append(f"Signal {sig} identique il y a {int(age)} min. Même mouvement.")
-                break
-    for c in CORRELATIONS.get(pair, []):
-        if c in autres_cond and autres_cond[c].get("signal") == sig:
-            raisons.append(f"{c} a le même signal. Doubler ton risque.")
-    if bt and bt["n"] >= 10 and bt["pct"] is not None and bt["pct"] < 45:
-        raisons.append(f"Sur le passé, ce signal n'a réussi que {bt['pct']}% du temps.")
-    bloquants = [r for r in raisons if "pullback" in r or "trop avancé" in r or "pas d'objectif" in r.lower() or "doubler ton risque" in r or "peu fiables" in r or "excès" in r]
-    avertissements = [r for r in raisons if r not in bloquants]
-    if timing and timing["niveau"] == "TARDIF":
-        return {"verdict": "N'ENTRE PAS", "couleur": "rouge", "action": "ATTENDRE LE PROCHAIN CROISEMENT",
-                "message": f"Signal {sig} sur {pair} trop tardif. Croisement EMA M5 il y a {tfs['M5']['ema_depuis']} bougies. Attends un nouveau croisement.",
-                "raisons": raisons}
-    if bloquants:
-        return {"verdict": "N'ENTRE PAS", "couleur": "rouge", "action": "PASSER CE TRADE",
-                "message": f"Signal {sig} sur {pair} MAIS quelque chose bloque.",
-                "raisons": raisons}
-    if avertissements:
-        return {"verdict": "PRUDENCE — DEMI-LOT", "couleur": "jaune", "action": "RÉDUIRE LE LOT DE MOITIÉ",
-                "message": f"Signal {sig} sur {pair}, points de vigilance. Réduis ton lot de moitié.",
-                "raisons": raisons}
-    lot_msg = "lot plein" if not timing or timing["niveau"] == "FRAIS" else "demi-lot"
-    rsi_mention = f" RSI M5 : {rsi_m5}." if rsi_m5 else ""
-    return {"verdict": "ENTRE MAINTENANT", "couleur": "vert", "action": f"ACHAT/VENTE AU MARCHÉ — {lot_msg.upper()}",
-            "message": f"Setup propre sur {pair}. Signal {sig}, timing {timing['niveau'] if timing else 'OK'}.{rsi_mention} Entre à la clôture M5 avec le {lot_msg}.",
-            "raisons": raisons or ["Tous les filtres au vert."]}
+            feu = "orange"
+            lot_niveau = "ATTENDRE"
+            lot_txt = "N'ENTRE PAS : signal trop tardif."
+    g = {"sens": sig, "feu": feu, "heure": datetime.fromtimestamp(nxt, BENIN).strftime("%H:%M"),
+         "prix": fp(pair, prix), "contrat": CONTRAT.get(pair), "stop": None,
+         "timing": timing, "lot_niveau": lot_niveau, "lot_txt": lot_txt,
+         "signal_bougies": cond.get("signal_bougies"),
+         "rsi_m5": tfs["M5"]["rsi"]}
+    if cote:
+        g.update({"stop": cote["stop"], "objectif": cote["objectif"], "ratio": cote["ratio"],
+                  "dist": f"{abs(prix - cote['stop_brut']):.8f}",
+                  "dist_obj": f"{abs(cote['obj_brut'] - prix):.8f}",
+                  "moitie": fp(pair, prix + (cote["obj_brut"] - prix) / 2)})
+    else:
+        g["feu"] = "orange"
+    return g
 
 
 # ───────────── STATS ─────────────
@@ -822,12 +752,6 @@ def calc_sltp(pair, prix, m15):
             "vente": cote_sltp(pair, prix, stop_v, obj_v, "vente")}
 
 
-def tendance_simple(cl):
-    x = np.arange(len(cl))
-    p = np.polyfit(x, np.array(cl), 1)[0]
-    return 1 if p > 0 else -1 if p < 0 else 0
-
-
 def backtest(series, pair="", horizon=12, test=500, max_trade=48):
     if any(len(series.get(tf, [])) < 30 for tf in ("H1", "M30", "M15", "M5")):
         return None
@@ -843,6 +767,14 @@ def backtest(series, pair="", horizon=12, test=500, max_trade=48):
             prev = None
             continue
         t = m5[i]["t"] + 300
+        # Vérifier le signal bougies sur les 5 dernières bougies M5
+        sig_b = detecter_signal_bougies(m5[max(0, i - 4):i + 1])
+        if not sig_b:
+            prev = None
+            continue
+        s_sens = sig_b["sens"]
+        s_sign = 1 if s_sens == "haussier" else -1
+        # Vérifier alignement des 3 TF
         etats, ok = set(), True
         for tf in ("H1", "M30", "M15"):
             k = bisect.bisect_right(ends[tf], t)
@@ -860,19 +792,10 @@ def backtest(series, pair="", horizon=12, test=500, max_trade=48):
                 etats.add(-1)
             else:
                 etats.add(0)
-        if not ok:
+        if not ok or etats != {s_sign}:
             prev = None
             continue
-        sig = None
-        if etats == {1} or etats == {-1}:
-            s = next(iter(etats))
-            cl = [b["close"] for b in m5[max(0, i - 100):i + 1]]
-            e5, e25 = calc_ema_serie(cl, EMA_COURT), calc_ema_serie(cl, EMA_LONG)
-            if e5 and e25:
-                if s == 1 and e5[-1] > e25[-1]:
-                    sig = "ACHAT"
-                elif s == -1 and e5[-1] < e25[-1]:
-                    sig = "VENTE"
+        sig = "ACHAT" if s_sign == 1 else "VENTE"
         if sig and sig != prev:
             n[sig] += 1
             entree, sortie = m5[i]["close"], m5[i + horizon]["close"]
@@ -891,22 +814,14 @@ def backtest(series, pair="", horizon=12, test=500, max_trade=48):
                         bj = m5[j]
                         if sig == "ACHAT":
                             if bj["low"] <= st:
-                                res_r = -1.0
-                                sim["sl"] += 1
-                                break
+                                res_r = -1.0; sim["sl"] += 1; break
                             if bj["high"] >= ob:
-                                res_r = cote["ratio"]
-                                sim["tp"] += 1
-                                break
+                                res_r = cote["ratio"]; sim["tp"] += 1; break
                         else:
                             if bj["high"] >= st:
-                                res_r = -1.0
-                                sim["sl"] += 1
-                                break
+                                res_r = -1.0; sim["sl"] += 1; break
                             if bj["low"] <= ob:
-                                res_r = cote["ratio"]
-                                sim["tp"] += 1
-                                break
+                                res_r = cote["ratio"]; sim["tp"] += 1; break
                     if res_r is None and fin == i + max_trade:
                         dernier = m5[fin]["close"]
                         res_r = ((dernier - entree) if sig == "ACHAT" else (entree - dernier)) / risque
@@ -955,125 +870,6 @@ def fraicheur(m5):
     return {"texte": f"🌙 Marché fermé ou pas de données · dernière bougie M5 : {h}", "etat": "ferme"}
 
 
-def conditions_paire(tfs, ferme=False, generale=None):
-    manque = [k for k in ["H1", "M30", "M15", "M5"] if k not in tfs]
-    if manque:
-        return {"signal": "?", "couleur": "jaune", "bonus": False,
-                "conseil": "Données manquantes : " + ", ".join(manque),
-                "details": {}, "alertes": [], "generale": generale, "timing": None}
-    h1, m30, m15, m5 = tfs["H1"], tfs["M30"], tfs["M15"], tfs["M5"]
-    h4 = tfs.get("H4")
-    trois = (("H1", h1), ("M30", m30), ("M15", m15))
-    def verifier(sens):
-        if sens == "haussier":
-            fl, a, b, lab = "↑", "rsi", "rsi_bas", "RSI>50"
-        else:
-            fl, a, b, lab = "↓", "rsi_bas", "rsi", "RSI<50"
-        d = {}
-        for nom, t in trois:
-            d[f"{nom} {fl}"] = t["tendance"] == sens
-        for nom, t in trois:
-            if sens == "haussier":
-                d[f"{lab} {nom}"] = t["rsi"] > 50
-            else:
-                d[f"{lab} {nom}"] = t["rsi"] < 50
-        d[f"M5 EMA{fl}"] = m5["ema_signal"] == sens
-        bonus = bool(h4 and h4["tendance"] == sens)
-        return d, bonus, fl
-    res = {s: verifier(s) for s in ("haussier", "baissier")}
-    timing = calc_timing_entree(m5)
-    base = None
-    for sens, nom, couleur in (("haussier", "ACHAT", "vert"), ("baissier", "VENTE", "rouge")):
-        d, bonus, fl = res[sens]
-        if all(d.values()):
-            conseil = f"Signal {nom} détecté."
-            if bonus:
-                conseil = f"⭐ Signal {nom} renforcé (H4 dans le même sens)."
-            details = {**d, f"H4 {fl}": bonus}
-            base = {"signal": nom, "couleur": couleur, "bonus": bonus,
-                    "conseil": conseil, "details": details, "timing": timing}
-            break
-    if base is None:
-        meilleur = max(("haussier", "baissier"), key=lambda s: sum(res[s][0].values()))
-        d, bonus, fl = res[meilleur]
-        nom = "ACHAT" if meilleur == "haussier" else "VENTE"
-        manque_c = [k for k, v in d.items() if not v]
-        ok = len(d) - len(manque_c)
-        conseil = f"⏸️ Attendre : {ok}/{len(d)} conditions {nom}."
-        base = {"signal": "ATTENDRE", "couleur": "jaune", "bonus": False,
-                "conseil": conseil, "details": {**d, f"H4 {fl}": bonus}, "timing": timing}
-    base["alertes"] = []
-    base["generale"] = generale
-    if ferme:
-        return {**base, "signal": "FERMÉ", "couleur": "gris", "bonus": False,
-                "conseil": "🌙 Marché fermé."}
-    return base
-
-
-def alertes_signal(cond, tfs, niv, sltp, bt, mm_h1):
-    sig = cond["signal"]
-    if sig not in ("ACHAT", "VENTE"):
-        return []
-    al = []
-    achat = sig == "ACHAT"
-    m5, m15 = tfs["M5"], tfs["M15"]
-    prix = m5["prix"]
-    if achat and niv and niv["res_brut"] is not None and niv["res_brut"] - prix < mm_h1:
-        al.append({"txt": f"Résistance proche ({niv['res']}).", "cls": "jaune"})
-    if not achat and niv and niv["sup_brut"] is not None and prix - niv["sup_brut"] < mm_h1:
-        al.append({"txt": f"Support proche ({niv['sup']}).", "cls": "jaune"})
-    if m5["grande"]:
-        al.append({"txt": f"Grosse bougie M5 (×{m5['taille_x']}).", "cls": "jaune"})
-    if m5["rsi"] > 80:
-        al.append({"txt": f"RSI M5 suracheté ({m5['rsi']}).", "cls": "jaune"})
-    if m5["rsi"] < 20:
-        al.append({"txt": f"RSI M5 survendu ({m5['rsi']}).", "cls": "jaune"})
-    if sltp:
-        cote = sltp["achat" if achat else "vente"]
-        if cote is None:
-            al.append({"txt": "Pas d'objectif clair.", "cls": "jaune"})
-        elif cote["ok"]:
-            al.append({"txt": f"Ratio {cote['ratio']}.", "cls": "vert"})
-        else:
-            al.append({"txt": f"Ratio {cote['ratio']} sous 1,5.", "cls": "jaune"})
-    return al
-
-
-def construire_guide(pair, cond, tfs, sltp):
-    sig = cond["signal"]
-    if sig not in ("ACHAT", "VENTE") or not sltp:
-        return None
-    achat = sig == "ACHAT"
-    cote = sltp["achat" if achat else "vente"]
-    prix = tfs["M5"]["prix"]
-    nxt = (int(time.time() // 300) + 1) * 300
-    timing = cond.get("timing")
-    feu = "vert"
-    lot_niveau = "PLEIN"
-    lot_txt = "Lot plein autorisé."
-    if timing:
-        if timing["niveau"] == "EN COURS":
-            feu = "orange"
-            lot_niveau = "DEMI"
-            lot_txt = "Demi-lot conseillé."
-        elif timing["niveau"] == "TARDIF":
-            feu = "orange"
-            lot_niveau = "ATTENDRE"
-            lot_txt = "N'ENTRE PAS : mouvement trop avancé."
-    g = {"sens": sig, "feu": feu, "heure": datetime.fromtimestamp(nxt, BENIN).strftime("%H:%M"),
-         "prix": fp(pair, prix), "contrat": CONTRAT.get(pair), "stop": None,
-         "timing": timing, "lot_niveau": lot_niveau, "lot_txt": lot_txt,
-         "rsi_m5": tfs["M5"]["rsi"]}
-    if cote:
-        g.update({"stop": cote["stop"], "objectif": cote["objectif"], "ratio": cote["ratio"],
-                  "dist": f"{abs(prix - cote['stop_brut']):.8f}",
-                  "dist_obj": f"{abs(cote['obj_brut'] - prix):.8f}",
-                  "moitie": fp(pair, prix + (cote["obj_brut"] - prix) / 2)})
-    else:
-        g["feu"] = "orange"
-    return g
-
-
 # ───────────── ANALYSE PARALLÉLISÉE ─────────────
 
 def charger_tf_pour_paire(pair, source, tf, interval, range_, gran):
@@ -1111,7 +907,7 @@ def analyser_paire(pair, source, historique=None, autres_cond=None):
     generale = calc_tendance_generale(resultats)
     cond = conditions_paire(resultats, fr["etat"] == "ferme", generale)
     prix = fp(pair, resultats["M5"]["prix"]) if "M5" in resultats else "—"
-    niv = sltp = bt = heures = guide = None
+    niv = sltp = bt = guide = None
     h1, m15 = series.get("H1", []), series.get("M15", [])
     if "M5" in resultats and len(h1) >= 30 and len(m15) >= 30:
         p = resultats["M5"]["prix"]
@@ -1121,7 +917,7 @@ def analyser_paire(pair, source, historique=None, autres_cond=None):
         cond["alertes"] = alertes_signal(cond, resultats, niv, sltp, bt, mouvement_moyen(h1, 24))
         guide = construire_guide(pair, cond, resultats, sltp)
     return {"tfs": resultats, "stats": stats, "fraicheur": fr, "cond": cond, "prix": prix,
-            "niv": niv, "sltp": sltp, "bt": bt, "heures": heures, "guide": guide, "generale": generale}
+            "niv": niv, "sltp": sltp, "bt": bt, "guide": guide, "generale": generale}
 
 
 def analyser_securise(pair, source, historique=None, autres_cond=None):
@@ -1131,7 +927,76 @@ def analyser_securise(pair, source, historique=None, autres_cond=None):
         print(f"Erreur {pair}: {e}")
         return {"tfs": {}, "stats": None, "fraicheur": {"texte": "Erreur", "etat": "ferme"},
                 "cond": conditions_paire({}), "prix": "—", "niv": None, "sltp": None,
-                "bt": None, "heures": None, "guide": None, "generale": None}
+                "bt": None, "guide": None, "generale": None}
+
+
+def generer_conseil(pair, d, session_act, autres_cond, historique):
+    """Conseil basé sur les signaux bougies."""
+    tfs = d["tfs"]
+    cond = d["cond"]
+    gen = d["generale"]
+    sig_b = cond.get("signal_bougies")
+    sig = cond["signal"]
+
+    if not tfs or not gen:
+        return {"verdict": "PAS DE DONNÉES", "couleur": "gris", "action": "ATTENDRE",
+                "message": f"Pas assez de données sur {pair}.", "raisons": ["Données insuffisantes."]}
+
+    # Cas 1 : signal bougies + alignement OK
+    if sig in ("ACHAT", "VENTE"):
+        timing = cond.get("timing")
+        raisons = []
+        achat = sig == "ACHAT"
+        if session_act["qualite"] == "faible":
+            raisons.append(f"Session {session_act['nom']} : peu de volume.")
+        if timing and timing["niveau"] == "EN COURS":
+            raisons.append(f"Signal bougies il y a {sig_b.get('il_y_a', 0)} bougies (EN COURS).")
+        elif timing and timing["niveau"] == "TARDIF":
+            raisons.append(f"Signal bougies il y a {sig_b.get('il_y_a', 0)} bougies (TARDIF).")
+        h4 = tfs.get("H4")
+        contre = "baissier" if achat else "haussier"
+        if h4 and h4["tendance"] == contre:
+            raisons.append(f"H4 est {contre} (contre ton signal).")
+        rsi_m5 = tfs["M5"]["rsi"]
+        if achat and rsi_m5 > 80:
+            raisons.append(f"RSI M5 suracheté ({rsi_m5}).")
+        if not achat and rsi_m5 < 20:
+            raisons.append(f"RSI M5 survendu ({rsi_m5}).")
+        sltp = d["sltp"]
+        cote = sltp["achat" if achat else "vente"] if sltp else None
+        if cote is None:
+            raisons.append("Pas d'objectif clair.")
+        elif not cote["ok"]:
+            raisons.append(f"Ratio faible ({cote['ratio']}).")
+        bloquants = [r for r in raisons if "contre ton signal" in r or "pas d'objectif" in r.lower() or "TARDIF" in r]
+        avertissements = [r for r in raisons if r not in bloquants]
+
+        type_sig = sig_b["type"] if sig_b else "signal"
+        fiab = sig_b["fiabilite"] if sig_b else 0
+
+        if bloquants:
+            return {"verdict": "N'ENTRE PAS", "couleur": "rouge", "action": "PASSER CE TRADE",
+                    "message": f"Signal {sig} par bougies ({type_sig}) MAIS quelque chose bloque.",
+                    "raisons": raisons}
+        if avertissements:
+            return {"verdict": "PRUDENCE — DEMI-LOT", "couleur": "jaune", "action": "RÉDUIRE LE LOT",
+                    "message": f"Signal {sig} par bougies ({type_sig}, fiabilité {fiab}%). Points de vigilance.",
+                    "raisons": raisons}
+        lot_msg = "lot plein" if not timing or timing["niveau"] == "FRAIS" else "demi-lot"
+        return {"verdict": "ENTRE MAINTENANT", "couleur": "vert",
+                "action": f"{sig} AU MARCHÉ — {lot_msg.upper()}",
+                "message": f"Signal {sig} par bougies : {type_sig} (fiabilité {fiab}%). H1+M30+M15 alignés. Entre à la clôture M5 avec le {lot_msg}.",
+                "raisons": raisons or [f"Signal bougies valide : {type_sig}."]}
+
+    # Cas 2 : signal bougies mais pas aligné
+    if sig_b:
+        return {"verdict": "ATTENDRE", "couleur": "gris", "action": "NE RIEN FAIRE",
+                "message": cond["conseil"], "raisons": ["Signal bougies présent mais alignement des TF incomplet."]}
+
+    # Cas 3 : pas de signal bougies
+    return {"verdict": "ATTENDRE", "couleur": "gris", "action": "NE RIEN FAIRE",
+            "message": "Aucun signal de bougie visible sur M5. Attends 3 bougies successives, une grande bougie, ou une englobante dans le sens de la tendance.",
+            "raisons": ["Pas de signal bougies."]}
 
 
 def analyser_tout():

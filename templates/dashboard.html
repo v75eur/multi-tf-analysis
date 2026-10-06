@@ -28,7 +28,7 @@
 
 {% if journal %}
 <details class="journal" open>
-<summary>📒 Journal du bot — ses conseils récents ({{ journal|length }} entrées)</summary>
+<summary>📒 Journal du bot ({{ journal|length }} entrées)</summary>
 <div class="journal-feed">
 {% for j in journal|reverse %}
 <div class="journal-entry {{ j.couleur }}">
@@ -68,6 +68,7 @@
 {% set tfs = d.tfs %}
 {% set gen = d.generale %}
 {% set cb = d.conseil_bot %}
+{% set sig_b = c.signal_bougies %}
 <section id="{{ pair }}" data-signal="{{ c.signal }}" class="paire {% if cb and cb.verdict == 'ENTRE MAINTENANT' %}signal-achat{% elif cb and cb.verdict == 'N\'ENTRE PAS' %}signal-vente{% endif %}">
 
 <div class="tete">
@@ -102,24 +103,24 @@
 </div>
 {% endif %}
 
-{# ═════ LIGNE DE DÉCISION ULTRA-SIMPLE ═════ #}
-<div class="decision {{ c.couleur if c.signal in ('ACHAT','VENTE') else 'jaune' }}">
-<div class="decision-titre">
-{% if c.signal == 'ACHAT' %}🎯 DÉCISION : ACHAT
-{% elif c.signal == 'VENTE' %}🎯 DÉCISION : VENTE
-{% else %}🎯 DÉCISION : ATTENDRE{% endif %}
+{# SIGNAL BOUGIES VISIBLE #}
+{% if sig_b %}
+<div class="signal-bougies {{ 'vert' if sig_b.sens == 'haussier' else 'rouge' }}">
+<div class="signal-bougies-titre">
+{% if sig_b.sens == 'haussier' %}🕯️ SIGNAL BOUGIES : {{ sig_b.type }} — ACHAT
+{% else %}🕯️ SIGNAL BOUGIES : {{ sig_b.type }} — VENTE{% endif %}
 </div>
-<div class="decision-pourquoi">
-{% set rsi_m5 = tfs['M5'].rsi if 'M5' in tfs else 50 %}
-Acheteurs : <b class="vert">{{ '%.1f'|format(rsi_m5) }}%</b> · Vendeurs : <b class="rouge">{{ '%.1f'|format(100 - rsi_m5) }}%</b>
-{% if gen %} · Tendance : <b class="{{ gen.couleur }}">{{ gen.tendance }}</b> (score {{ '%+.1f'|format(gen.score_pct) }}%){% endif %}
+<div class="signal-bougies-info">
+Fiabilité historique : <b>{{ sig_b.fiabilite }}%</b> · {{ sig_b.desc }}
+{% if sig_b.taille > 0 %} · Taille ×{{ sig_b.taille }}{% endif %}
+{% if sig_b.il_y_a is not none %} · Il y a {{ sig_b.il_y_a }} bougie(s){% endif %}
 </div>
-{% if d.guide %}
-<div class="decision-quand">
-Quand : à la clôture M5, vers <b>{{ d.guide.heure }}</b> · Stop : <b>{{ d.guide.stop }}</b> · Objectif : <b>{{ d.guide.objectif }}</b> · Lot : <span class="lotbox-inline" data-dist="{{ d.guide.dist }}" data-gain="{{ d.guide.dist_obj }}" data-contrat="{{ d.guide.contrat or '' }}" data-niveau="{{ d.guide.lot_niveau }}">—</span>
+</div>
+{% else %}
+<div class="signal-bougies neutre">
+🕯️ Aucun signal de bougie visible sur M5. Attends 3 bougies successives, une grande bougie, ou une englobante dans le sens de la tendance.
 </div>
 {% endif %}
-</div>
 
 {% if c.timing %}
 <div class="timing {{ c.timing.couleur }}">
@@ -132,12 +133,11 @@ Quand : à la clôture M5, vers <b>{{ d.guide.heure }}</b> · Stop : <b>{{ d.gui
 {% if gen %}
 <div class="general {{ gen.couleur }}">
 <div class="general-titre">
-🧮 Tendance générale (vote pondéré des TF)
+🧮 Tendance générale (vote pondéré)
 <span class="general-badge {{ gen.couleur }}">{{ gen.tendance }}</span>
 </div>
 <div class="general-score">
 Score : <b class="{{ gen.couleur }}">{{ '%+.1f'|format(gen.score_pct) }}%</b>
-{% if gen.bonus != 0 %}<span class="pct">(bonus cohérence {{ '%+.0f'|format(gen.bonus) }})</span>{% endif %}
 </div>
 <div class="votes-detail">
 <b>Vote de chaque TF + RSI :</b>
@@ -148,24 +148,11 @@ Score : <b class="{{ gen.couleur }}">{{ '%+.1f'|format(gen.score_pct) }}%</b>
 </span>
 {% endfor %}
 </div>
-<div class="votes-formule">Formule : (somme des votes × poids) / somme des poids × 100</div>
 </div>
 <div class="general-chiffres" style="margin-top:.6rem;">
-<span class="vert">🟢 RSI pondéré global {{ gen.rsi_gen }}%</span>
+<span class="vert">🟢 RSI pondéré {{ gen.rsi_gen }}%</span>
 <span class="rouge">🔴 Complément {{ gen.ven_gen }}%</span>
 </div>
-{% if gen.continuations %}
-<div class="continuations-box">
-<b>🔁 Signaux de continuation détectés :</b>
-<ul>
-{% for m in gen.continuations %}
-<li class="{{ 'vert' if m.sens == 'haussier' else 'rouge' }}">
-<b>{{ m.tf }}</b> · {{ m.nom }} (fiabilité {{ m.fiabilite }}%) — {{ m.desc }}
-</li>
-{% endfor %}
-</ul>
-</div>
-{% endif %}
 </div>
 {% endif %}
 
@@ -174,7 +161,7 @@ Score : <b class="{{ gen.couleur }}">{{ '%+.1f'|format(gen.score_pct) }}%</b>
 <div class="guide {{ g.feu }}">
 <div class="guide-titre">🧭 Guide du trade : {{ g.sens }} — {% if g.feu == 'vert' %}✅ tu peux entrer{% else %}⏳ attends{% endif %}</div>
 <ol class="etapes">
-<li><b>Avant d'entrer :</b> vérifie qu'aucune grosse annonce n'arrive dans l'heure.</li>
+<li><b>Signal bougies :</b> {{ g.signal_bougies.type if g.signal_bougies else '—' }} (fiabilité {{ g.signal_bougies.fiabilite if g.signal_bougies else 0 }}%)</li>
 <li><b>Quand :</b> à la clôture de la bougie M5, vers <b>{{ g.heure }}</b> (heure du Bénin).</li>
 <li><b>Ordre :</b> {{ g.sens }} au marché, autour de <b>{{ g.prix }}</b>.</li>
 {% if g.stop %}
@@ -193,10 +180,10 @@ Score : <b class="{{ gen.couleur }}">{{ '%+.1f'|format(gen.score_pct) }}%</b>
 </div>
 {% endif %}
 
-<h3>⏱️ Analyse par timeframe — RSI et motifs de continuation</h3>
+<h3>⏱️ Analyse par timeframe</h3>
 <div class="scroll">
 <table>
-<thead><tr><th>TF</th><th>Poids</th><th>RSI</th><th>RSI Pér.</th><th>Acheteurs</th><th>Vendeurs</th><th>Tendance</th><th>Motifs de continuation</th><th>Signal EMA</th></tr></thead>
+<thead><tr><th>TF</th><th>Poids</th><th>RSI</th><th>Acheteurs</th><th>Vendeurs</th><th>Tendance</th><th>Croisement EMA</th><th>Signal bougies</th></tr></thead>
 <tbody>
 {% for tf in ["H4", "H1", "M30", "M15", "M5"] %}
 {% if tf in tfs %}
@@ -205,25 +192,13 @@ Score : <b class="{{ gen.couleur }}">{{ '%+.1f'|format(gen.score_pct) }}%</b>
 <td><b>{{ t.tf }}</b></td>
 <td><span class="poids">×{{ {'H4':1,'H1':2,'M30':3,'M15':4,'M5':5}[tf] }}</span></td>
 <td class="{% if t.rsi >= 70 %}rouge{% elif t.rsi <= 30 %}vert{% endif %}"><b>{{ t.rsi }}</b></td>
-<td><span class="pct">{{ t.rsi_periode }}</span></td>
 <td class="vert"><b>{{ t.pct_acheteurs }}%</b></td>
 <td class="rouge"><b>{{ t.pct_vendeurs }}%</b></td>
 <td>{{ t.tendance }}</td>
-<td>
-{% if t.continuation %}
-{% for m in t.continuation %}
-<span class="tag {{ 'vert' if m.sens == 'haussier' else 'rouge' }}">{{ m.nom }} ({{ m.fiabilite }}%)</span>
-{% endfor %}
-{% else %}—{% endif %}
-</td>
 <td class="{% if t.ema_signal == 'haussier' %}vert{% elif t.ema_signal == 'baissier' %}rouge{% endif %}"><b>{{ t.ema_signal or '—' }}</b>
-{% if tf == 'M5' and t.ema_depuis is not none %}
-{% set dep = t.ema_depuis %}
-{% if dep <= 5 %}<span class="timing-mini vert">🔥 {{ dep }} bg</span>
-{% elif dep <= 12 %}<span class="timing-mini jaune">⏳ {{ dep }} bg</span>
-{% else %}<span class="timing-mini rouge">❌ {{ dep }} bg</span>{% endif %}
-{% endif %}
+{% if t.ema_depuis is not none %} <span class="pct">{{ t.ema_depuis }} bg</span>{% endif %}
 </td>
+<td>{% if t.signal_bougies %}<span class="tag {{ 'vert' if t.signal_bougies.sens == 'haussier' else 'rouge' }}">{{ t.signal_bougies.type }} ({{ t.signal_bougies.fiabilite }}%)</span>{% else %}—{% endif %}</td>
 </tr>
 {% endif %}
 {% endfor %}
@@ -231,7 +206,7 @@ Score : <b class="{{ gen.couleur }}">{{ '%+.1f'|format(gen.score_pct) }}%</b>
 </table>
 </div>
 
-<h3>🧪 Backtest</h3>
+<h3>🧪 Backtest (avec signaux bougies)</h3>
 {% if d.bt %}
 <div class="stats">
 <div class="tile"><small>Signaux</small><b>{{ d.bt.n }}</b></div>
@@ -248,14 +223,23 @@ Score : <b class="{{ gen.couleur }}">{{ '%+.1f'|format(gen.score_pct) }}%</b>
 {% endfor %}
 
 <details class="aide">
-<summary>ℹ️ Comment lire le bot — RSI, tendance et motifs de continuation</summary>
+<summary>ℹ️ Comment lire — Nouvelle stratégie : SIGNAUX BOUGIES</summary>
 <ul>
-<li><b>📊 Acheteurs / Vendeurs</b> : basé sur le RSI standard (comparable TradingView). RSI 70 = 70% acheteurs. RSI 30 = 70% vendeurs.</li>
-<li><b>🔁 Motifs de continuation</b> : le bot détecte les motifs réputés selon Bulkowski (statistiques sur le passé) : Rising/Falling Three Methods, Separating Lines, Deliberation, Three Line Strike. Les fiabilités affichées sont celles de Bulkowski.</li>
-<li><b>🧮 Tendance générale</b> = vote pondéré des TF : +1 (haussier), −1 (baissier), 0 (neutre), × poids (M5×5, M15×4...).</li>
-<li><b>🎯 Ligne DÉCISION</b> : en haut de chaque paire, la décision claire (ACHAT / VENTE / ATTENDRE), le % acheteurs/vendeurs, la tendance, et les niveaux si signal.</li>
-<li><b>⚠️ Avertissement 10 $</b> : avec 10 $ de capital et 1% de risque, tu ne peux pas respecter le stop sur la plupart des paires. Le bot te dira "Capital trop petit". Si tu prends quand même, tu risques 3-5% par trade.</li>
-<li><b>🔔 Son + 🔊 Voix</b> : alerte vocale en français quand signal ou verdict change.</li>
+<li><b>🕯️ Signaux bougies</b> : le déclencheur d'entrée est maintenant un signal visible sur les bougies M5.</li>
+<li><b>3 types de signaux acceptés :</b>
+  <ul>
+    <li><b>3 bougies successives</b> dans le sens (3 vertes = ACHAT, 3 rouges = VENTE) — fiabilité 78%</li>
+    <li><b>Grande bougie</b> (×2 la taille moyenne) dans le sens — fiabilité 75%</li>
+    <li><b>Englobante</b> (bougie qui avale la précédente) dans le sens — fiabilité 63%</li>
+  </ul>
+</li>
+<li><b>Priorité</b> : Grande bougie > Englobante > 3 bougies. Le signal le plus fort est retenu.</li>
+<li><b>Contexte obligatoire</b> : H1 + M30 + M15 alignés dans le même sens + RSI > 50 (achat) ou < 50 (vente).</li>
+<li><b>Croisement EMA</b> : affiché dans le tableau pour information, mais <b>ne déclenche plus l'entrée</b>.</li>
+<li><b>RSI</b> : 14 standard, 7 sur M5. Affiché en % acheteurs/vendeurs.</li>
+<li><b>🎯 Décision</b> : le bot te dit ENTRE MAINTENANT / PRUDENCE / N'ENTRE PAS / ATTENDRE.</li>
+<li><b>⚠️ 10 $</b> : le lot minimum 0.01 fait risquer plus de 1 % par trade sur la plupart des paires. Le bot te le dira.</li>
+<li><b>🔔 Son + 🔊 Voix</b> : alerte quand signal bougies apparaît ou quand verdict change.</li>
 </ul>
 </details>
 
@@ -276,7 +260,6 @@ function majBoutons() {
   var v = document.getElementById('voix');
   if (v) v.textContent = voixOn ? '🔊 Voix activée' : '🔇 Voix';
 }
-
 function bip(niveau) {
   try {
     if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -293,19 +276,16 @@ function bip(niveau) {
     if (navigator.vibrate) navigator.vibrate(niveau === 'fort' ? [300, 100, 300, 100, 300] : [200, 100, 200]);
   } catch (e) {}
 }
-
 function parler(txt) {
   if (!voixOn) return;
   try {
     if (!('speechSynthesis' in window)) return;
     window.speechSynthesis.cancel();
     var u = new SpeechSynthesisUtterance(txt);
-    u.lang = 'fr-FR';
-    u.rate = 1.05; u.pitch = 1.0; u.volume = 1.0;
+    u.lang = 'fr-FR'; u.rate = 1.05; u.pitch = 1.0; u.volume = 1.0;
     window.speechSynthesis.speak(u);
   } catch (e) {}
 }
-
 function lireSignaux() {
   var o = {};
   document.querySelectorAll('section.paire').forEach(function (s) { o[s.id] = s.dataset.signal; });
@@ -331,7 +311,6 @@ function calcLots() {
     if (cap) localStorage.setItem('capital', String(cap));
     if (risk) localStorage.setItem('risque', String(risk));
   } catch (e) {}
-  // Calcul classique
   document.querySelectorAll('.lotbox').forEach(function (el) {
     var out = el.querySelector('.lotres');
     var dist = parseFloat(el.dataset.dist);
@@ -350,19 +329,6 @@ function calcLots() {
     var prefix = niveau === 'DEMI' ? 'Lot (demi) : ' : 'Lot : ';
     out.textContent = prefix + lot.toFixed(2) + ' → perte max ≈ ' + (lot * dist * ct).toFixed(2) + ' $ · gain ≈ ' + (lot * gain * ct).toFixed(2) + ' $';
   });
-  // Version inline (ligne décision)
-  document.querySelectorAll('.lotbox-inline').forEach(function (el) {
-    var dist = parseFloat(el.dataset.dist);
-    var ct = parseFloat(el.dataset.contrat);
-    var niveau = el.dataset.niveau || 'PLEIN';
-    if (!cap || !risk) { el.textContent = '—'; return; }
-    var maxp = cap * risk / 100;
-    if (niveau === 'DEMI') maxp = maxp / 2;
-    if (!ct) { el.textContent = 'max ' + maxp.toFixed(2) + ' $'; return; }
-    var lot = Math.floor(maxp / (dist * ct) * 100) / 100;
-    if (lot < 0.01) { el.textContent = '0.01 min (risque > ' + risk + '%)'; return; }
-    el.textContent = lot.toFixed(2);
-  });
 }
 try {
   var capSauve = localStorage.getItem('capital');
@@ -380,7 +346,6 @@ document.getElementById('son').addEventListener('click', function () {
   majBoutons();
   if (sonOn) bip('moyen');
 });
-
 document.getElementById('voix').addEventListener('click', function () {
   voixOn = !voixOn;
   try { localStorage.setItem('voix', voixOn ? '1' : '0'); } catch (e) {}
@@ -417,7 +382,6 @@ async function rafraichir() {
     var nouveauxVerdicts = lireVerdicts();
     var alertes = [];
     var voixMsg = [];
-
     Object.keys(nouveaux).forEach(function (k) {
       if (estSignal(nouveaux[k]) && precedent[k] !== nouveaux[k]) {
         alertes.push('🔔 ' + nouveaux[k] + ' ' + k);
@@ -438,10 +402,8 @@ async function rafraichir() {
         }
       }
     });
-
     precedent = nouveaux;
     precedentsVerdicts = nouveauxVerdicts;
-
     if (alertes.length) {
       if (sonOn) {
         var fort = alertes.some(function (a) { return a.indexOf('✅') === 0; });
