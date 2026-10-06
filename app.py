@@ -31,16 +31,10 @@ DERIV_WS = "wss://api.derivws.com/trading/v1/options/ws/public"
 CACHE_SEC = {"1h": 300, "30m": 180, "15m": 120, "5m": 60}
 _cache_yahoo = {}
 
-# Poids des timeframes pour la tendance générale
 POIDS_TF = {"M5": 5, "M15": 4, "M30": 3, "H1": 2, "H4": 1}
 ORDRE_TF = ["M5", "M15", "M30", "H1", "H4"]
 
-# ═══════════ RSI : période adaptée par TF ═══════════
-# RSI 14 = standard (comparable à TradingView)
-# RSI 7 sur M5 car le marché bouge vite
 RSI_PERIODE = {"M5": 7, "M15": 14, "M30": 14, "H1": 14, "H4": 14}
-
-# Nombre de bougies analysées pour la tendance par régression
 PERIODE_TENDANCE = {"M5": 30, "M15": 25, "M30": 20, "H1": 15, "H4": 10}
 
 CORRELATIONS = {"EURUSD": ["GBPUSD"], "GBPUSD": ["EURUSD"], "XAUUSD": [], "V75": []}
@@ -51,6 +45,16 @@ JOURNAL_MAX = 200
 TIMING_FRAIS_MAX = 5
 TIMING_MOYEN_MAX = 12
 HTTP_TIMEOUT = 6
+
+# ═══════════════════════════════════════════════════════
+# SEUILS DES MOTIFS DE CONTINUATION (basés sur Bulkowski)
+# ═══════════════════════════════════════════════════════
+SEUILS_MOTIFS = {
+    "rising_three": 0.02,       # écart max entre les 3 petites bougies
+    "separating": 0.015,        # écart max pour separating lines
+    "deliberation": 0.01,       # petite bougie avant continuation
+    "three_line_strike": 0.005, # écart max pour 3 line strike
+}
 
 
 def logged():
@@ -165,7 +169,6 @@ def calc_ema_signal(clotures):
 
 
 def calc_tendance(clotures):
-    """Tendance par régression linéaire sur les N dernières clôtures."""
     if len(clotures) < 3:
         return "neutre", 0.0
     x = np.arange(1, len(clotures) + 1)
@@ -184,13 +187,7 @@ def calc_tendance(clotures):
     return "neutre", pct
 
 
-# ═══════════════════════════════════════════════════════
-# RSI — Relative Strength Index
-# Indicateur reconnu, comparable à TradingView
-# RSI 70 = 70% force acheteuse · RSI 30 = 70% force vendeuse
-# ═══════════════════════════════════════════════════════
 def calc_rsi(bougies, periode=14):
-    """RSI classique de Wilder. Utilise uniquement les clôtures."""
     if len(bougies) < periode + 1:
         return 50.0
     clotures = [b["close"] for b in bougies]
@@ -207,18 +204,13 @@ def calc_rsi(bougies, periode=14):
         else:
             gains.append(0.0)
             pertes.append(0.0)
-
-    # Première moyenne (simple) sur les `periode` premières variations
     if len(gains) < periode:
         return 50.0
     gain_moy = float(np.mean(gains[:periode]))
     perte_moy = float(np.mean(pertes[:periode]))
-
-    # Lissage de Wilder pour le reste
     for i in range(periode, len(gains)):
         gain_moy = (gain_moy * (periode - 1) + gains[i]) / periode
         perte_moy = (perte_moy * (periode - 1) + pertes[i]) / periode
-
     if perte_moy == 0:
         return 100.0
     rs = gain_moy / perte_moy
@@ -287,7 +279,147 @@ def mouvement_moyen(bougies, n=24):
     return float(np.mean([b["high"] - b["low"] for b in d]))
 
 
-def calc_motifs(bougies):
+# ═══════════════════════════════════════════════════════
+# MOTIFS DE CONTINUATION RÉPUTÉS (Bulkowski)
+# ═══════════════════════════════════════════════════════
+
+def motif_rising_three_methods(bougies):
+    """Rising Three Methods (79% succès) : 1 grande verte, 3 petites rouges, 1 grande verte."""
+    if len(bougies) < 5:
+        return None
+    b = bougies[-5:]
+    # 1ère bougie : grande verte
+    if b[0]["close"] <= b[0]["open"]:
+        return None
+    # 3 petites rouges
+    for i in range(1, 4):
+        if b[i]["close"] >= b[i]["open"]:
+            return None
+        # corps petit
+        corps = abs(b[i]["close"] - b[i]["open"])
+        rng = b[i]["high"] - b[i]["low"]
+        if rng > 0 and corps / rng > 0.4:
+            return None
+    # Dernière grande verte qui dépasse la 1ère
+    if b[4]["close"] <= b[4]["open"]:
+        return None
+    if b[4]["close"] > b[0]["close"]:
+        return {"nom": "Rising Three Methods", "sens": "haussier", "fiabilite": 79,
+                "desc": "3 petites bougies rouges après une grande verte, puis cassure haussière"}
+    return None
+
+
+def motif_falling_three_methods(bougies):
+    """Falling Three Methods : 1 grande rouge, 3 petites vertes, 1 grande rouge."""
+    if len(bougies) < 5:
+        return None
+    b = bougies[-5:]
+    if b[0]["close"] >= b[0]["open"]:
+        return None
+    for i in range(1, 4):
+        if b[i]["close"] <= b[i]["open"]:
+            return None
+        corps = abs(b[i]["close"] - b[i]["open"])
+        rng = b[i]["high"] - b[i]["low"]
+        if rng > 0 and corps / rng > 0.4:
+            return None
+    if b[4]["close"] >= b[4]["open"]:
+        return None
+    if b[4]["close"] < b[0]["close"]:
+        return {"nom": "Falling Three Methods", "sens": "baissier", "fiabilite": 79,
+                "desc": "3 petites bougies vertes après une grande rouge, puis cassure baissière"}
+    return None
+
+
+def motif_separating_lines(bougies):
+    """Separating Lines (76% succès) : continuation après pullback."""
+    if len(bougies) < 3:
+        return None
+    b = bougies[-3:]
+    # Bougie 1 et 2 : même sens (tendance)
+    if b[0]["close"] > b[0]["open"] and b[1]["close"] > b[1]["open"]:
+        # Bougie 3 : rouge qui ouvre près de l'ouverture de la bougie 2
+        if b[2]["close"] < b[2]["open"]:
+            ecart = abs(b[2]["open"] - b[1]["open"]) / b[1]["open"]
+            if ecart < SEUILS_MOTIFS["separating"]:
+                return {"nom": "Bearish Separating Lines", "sens": "haussier", "fiabilite": 76,
+                        "desc": "Ligne de séparation après 2 vertes, reprise haussière probable"}
+    if b[0]["close"] < b[0]["open"] and b[1]["close"] < b[1]["open"]:
+        if b[2]["close"] > b[2]["open"]:
+            ecart = abs(b[2]["open"] - b[1]["open"]) / b[1]["open"]
+            if ecart < SEUILS_MOTIFS["separating"]:
+                return {"nom": "Bullish Separating Lines", "sens": "baissier", "fiabilite": 76,
+                        "desc": "Ligne de séparation après 2 rouges, reprise baissière probable"}
+    return None
+
+
+def motif_deliberation(bougies):
+    """Deliberation (75% succès) : grande bougie + 2 petites + grande bougie."""
+    if len(bougies) < 4:
+        return None
+    b = bougies[-4:]
+    # Grande bougie 1
+    rng1 = b[0]["high"] - b[0]["low"]
+    corps1 = abs(b[0]["close"] - b[0]["open"])
+    if rng1 <= 0 or corps1 / rng1 < 0.7:
+        return None
+    # 2 petites bougies
+    for i in range(1, 3):
+        rng = b[i]["high"] - b[i]["low"]
+        corps = abs(b[i]["close"] - b[i]["open"])
+        if rng <= 0 or corps / rng > 0.3:
+            return None
+    # Dernière grande bougie même sens
+    rng3 = b[3]["high"] - b[3]["low"]
+    corps3 = abs(b[3]["close"] - b[3]["open"])
+    if rng3 <= 0 or corps3 / rng3 < 0.7:
+        return None
+    if b[0]["close"] > b[0]["open"] and b[3]["close"] > b[3]["open"]:
+        return {"nom": "Bullish Deliberation", "sens": "haussier", "fiabilite": 75,
+                "desc": "Grande verte, 2 petites hésitations, grande verte de reprise"}
+    if b[0]["close"] < b[0]["open"] and b[3]["close"] < b[3]["open"]:
+        return {"nom": "Bearish Deliberation", "sens": "baissier", "fiabilite": 75,
+                "desc": "Grande rouge, 2 petites hésitations, grande rouge de reprise"}
+    return None
+
+
+def motif_three_line_strike(bougies):
+    """Three Line Strike : 3 bougies dans un sens + 1 grande bougie inverse."""
+    if len(bougies) < 4:
+        return None
+    b = bougies[-4:]
+    if b[0]["close"] > b[0]["open"] and b[1]["close"] > b[1]["open"] and b[2]["close"] > b[2]["open"]:
+        if b[3]["close"] < b[3]["open"]:
+            # La grande bougie rouge doit englober les 3 précédentes
+            if b[3]["close"] < b[0]["open"] and b[3]["open"] > b[2]["close"]:
+                return {"nom": "Bullish Three Line Strike", "sens": "haussier", "fiabilite": 65,
+                        "desc": "3 vertes suivies d'une grande rouge (faux signal) → reprise haussière"}
+    if b[0]["close"] < b[0]["open"] and b[1]["close"] < b[1]["open"] and b[2]["close"] < b[2]["open"]:
+        if b[3]["close"] > b[3]["open"]:
+            if b[3]["close"] > b[0]["open"] and b[3]["open"] < b[2]["close"]:
+                return {"nom": "Bearish Three Line Strike", "sens": "baissier", "fiabilite": 65,
+                        "desc": "3 rouges suivies d'une grande verte (faux signal) → reprise baissière"}
+    return None
+
+
+def detecter_motifs_continuation(bougies):
+    """Retourne la liste des motifs de continuation détectés."""
+    motifs = []
+    for f in [motif_rising_three_methods, motif_falling_three_methods,
+              motif_separating_lines, motif_deliberation, motif_three_line_strike]:
+        try:
+            m = f(bougies)
+            if m:
+                motifs.append(m)
+        except Exception:
+            pass
+    return motifs
+
+
+def calc_motifs_classiques(bougies):
+    """Mèches de rejet, englobante, bougie anormale."""
+    if len(bougies) < 2:
+        return [], False, 0, False, False
     b, p = bougies[-1], bougies[-2]
     rng = b["high"] - b["low"]
     motifs, mh, mb = [], False, False
@@ -345,9 +477,9 @@ def analyser(tf, bougies):
     sommets = trouver_sommets(bougies)
     divergence = calc_divergence(bougies, creux, sommets)
     ema5, ema25, ema_sig, ema_depuis = calc_ema_signal(clotures)
-    motifs, grande, taille_x, mh, mb = calc_motifs(bougies)
+    motifs, grande, taille_x, mh, mb = calc_motifs_classiques(bougies)
+    continuation = detecter_motifs_continuation(bougies)
 
-    # RSI → % acheteurs/vendeurs
     pa = round(rsi, 1)
     pv = round(100 - rsi, 1)
 
@@ -361,6 +493,7 @@ def analyser(tf, bougies):
         "ema5": ema5, "ema25": ema25, "ema_signal": ema_sig, "ema_depuis": ema_depuis,
         "motifs": motifs, "grande": grande, "taille_x": taille_x,
         "motif_haussier": mh, "motif_baissier": mb,
+        "continuation": continuation,
         "cassure": calc_cassure(bougies),
         "prix": clotures[-1]
     }
@@ -383,42 +516,29 @@ def calc_timing_entree(m5):
             "lot_conseil": "ATTENDRE", "lot_ratio": 0.0}
 
 
-# ═══════════════════════════════════════════════════════
-# TENDANCE GÉNÉRALE = VOTE PONDÉRÉ DES TF
-# Chaque TF vote +1 (haussier), -1 (baissier), 0 (neutre).
-# Pondéré par POIDS_TF (M5×5, M15×4, M30×3, H1×2, H4×1).
-# ═══════════════════════════════════════════════════════
 def calc_tendance_generale(tfs):
     if not tfs:
         return None
-
     poids_total = 0
     score = 0.0
     somme_rsi = 0.0
-
     for tf, data in tfs.items():
         p = POIDS_TF.get(tf, 1)
         poids_total += p
         somme_rsi += data["rsi"] * p
-
         if data["tendance"] == "haussier":
             vote = 1.0
         elif data["tendance"] == "baissier":
             vote = -1.0
         else:
             vote = 0.0
-
         score += vote * p
-
     if poids_total == 0:
         return None
-
     rsi_gen = round(somme_rsi / poids_total, 1)
     pa_gen = rsi_gen
     pv_gen = round(100 - rsi_gen, 1)
     score_pct_brut = score / poids_total * 100
-
-    # Bonus de cohérence
     sens_list = [t["tendance"] for t in tfs.values()]
     nb_haut = sum(1 for s in sens_list if s == "haussier")
     nb_bas = sum(1 for s in sens_list if s == "baissier")
@@ -428,9 +548,7 @@ def calc_tendance_generale(tfs):
         bonus = 10.0
     elif nb_bas == total_tf:
         bonus = -10.0
-
     score_pct = round(score_pct_brut + bonus, 1)
-
     if score_pct >= 60:
         tendance, couleur = "ACHAT FORT", "vert"
     elif score_pct >= 25:
@@ -441,8 +559,6 @@ def calc_tendance_generale(tfs):
         tendance, couleur = "VENTE", "rouge"
     else:
         tendance, couleur = "NEUTRE", ""
-
-    # Alignement progressif
     alignement = {"haussier": 0, "baissier": 0, "detail": []}
     for sens in ("haussier", "baissier"):
         compte = 0
@@ -457,15 +573,12 @@ def calc_tendance_generale(tfs):
     for tf in ORDRE_TF:
         if tf in tfs:
             alignement["detail"].append({"tf": tf, "sens": tfs[tf]["tendance"]})
-
     if alignement["haussier"] >= alignement["baissier"] and alignement["haussier"] > 0:
         align_sens, align_n = "haussier", alignement["haussier"]
     elif alignement["baissier"] > 0:
         align_sens, align_n = "baissier", alignement["baissier"]
     else:
         align_sens, align_n = None, 0
-
-    # Confirmation M5
     confirmation = None
     trois = ["M15", "M30", "H1"]
     if all(tf in tfs for tf in trois) and "M5" in tfs:
@@ -478,8 +591,6 @@ def calc_tendance_generale(tfs):
             if m5["ema_signal"] == "baissier" and (m5["ema_depuis"] or 99) <= 3:
                 confirmation = {"sens": "VENTE", "couleur": "rouge",
                                 "txt": "M15+M30+H1 baissiers + croisement EMA M5 baissier récent."}
-
-    # Détail des votes pour transparence
     votes_detail = []
     for tf in ORDRE_TF:
         if tf in tfs:
@@ -487,7 +598,12 @@ def calc_tendance_generale(tfs):
             v = 1 if tfs[tf]["tendance"] == "haussier" else (-1 if tfs[tf]["tendance"] == "baissier" else 0)
             votes_detail.append({"tf": tf, "vote": v, "poids": p, "contribution": v * p,
                                  "rsi": tfs[tf]["rsi"]})
-
+    # Collecter tous les motifs de continuation détectés
+    continuations = []
+    for tf in ORDRE_TF:
+        if tf in tfs:
+            for m in tfs[tf]["continuation"]:
+                continuations.append({**m, "tf": tf})
     return {"rsi_gen": rsi_gen, "ach_gen": pa_gen, "ven_gen": pv_gen,
             "score_pct": score_pct, "score_brut": round(score_pct_brut, 1),
             "bonus": bonus,
@@ -495,7 +611,8 @@ def calc_tendance_generale(tfs):
             "align_sens": align_sens, "align_n": align_n,
             "align_detail": alignement["detail"],
             "confirmation": confirmation,
-            "votes_detail": votes_detail}
+            "votes_detail": votes_detail,
+            "continuations": continuations}
 
 
 def session_actuelle():
@@ -522,12 +639,10 @@ def generer_conseil(pair, d, session_act, autres_cond, historique):
     bt = d["bt"]
     raisons = []
     sig = cond["signal"]
-
     if not tfs or not gen:
         return {"verdict": "PAS DE DONNÉES", "couleur": "gris", "action": "ATTENDRE",
                 "message": f"Je n'ai pas assez de données sur {pair} pour te conseiller.",
                 "raisons": ["Données insuffisantes ou marché fermé."]}
-
     if sig not in ("ACHAT", "VENTE"):
         manque = [k for k, v in cond.get("details", {}).items() if not v]
         msg = f"Pas de signal sur {pair}. Le marché n'est pas aligné."
@@ -535,93 +650,75 @@ def generer_conseil(pair, d, session_act, autres_cond, historique):
             msg += f" Il manque : {', '.join(manque[:3])}{'...' if len(manque) > 3 else ''}."
         return {"verdict": "ATTENDRE", "couleur": "gris", "action": "NE RIEN FAIRE",
                 "message": msg, "raisons": ["Aucun signal complet détecté."]}
-
     timing = cond.get("timing")
     achat = sig == "ACHAT"
-
     if session_act["qualite"] == "faible":
         raisons.append(f"Session {session_act['nom']} : peu de volume, signaux peu fiables.")
-
     if timing:
         if timing["niveau"] == "EN COURS":
-            raisons.append(f"Timing d'entrée EN COURS ({tfs['M5']['ema_depuis']} bougies depuis le croisement EMA M5).")
+            raisons.append(f"Timing d'entrée EN COURS ({tfs['M5']['ema_depuis']} bougies).")
         elif timing["niveau"] == "TARDIF":
-            raisons.append(f"Timing d'entrée TARDIF ({tfs['M5']['ema_depuis']} bougies). Le mouvement est déjà trop avancé.")
-
+            raisons.append(f"Timing d'entrée TARDIF ({tfs['M5']['ema_depuis']} bougies). Mouvement trop avancé.")
     h4 = tfs.get("H4")
     h1 = tfs.get("H1")
     contre = "baissier" if achat else "haussier"
     h4_contre = h4 and h4["tendance"] == contre
     h1_contre = h1 and h1["tendance"] == contre
     if h4_contre and h1_contre:
-        raisons.append(f"H4 ET H1 sont {contre}s (contre ton signal). C'est un pullback dans une tendance inverse.")
+        raisons.append(f"H4 ET H1 sont {contre}s (contre ton signal). Pullback dans une tendance inverse.")
     elif h4_contre:
         raisons.append(f"H4 est {contre} (contre ton signal). Le fond est contre toi.")
     elif h1_contre:
         raisons.append(f"H1 est {contre} (contre ton signal). La tendance horaire n'est pas retournée.")
-
     h1_data = tfs.get("H1")
     if h1_data and h1_data.get("pct_agitation", 0) > SEUIL_AGITATION_MAX:
         raisons.append(f"Marché trop agité (agitation H1 {h1_data['pct_agitation']}%).")
-
-    # Vérification RSI (excès)
     rsi_m5 = tfs["M5"]["rsi"]
     if achat and rsi_m5 > 80:
         raisons.append(f"RSI M5 en excès haussier ({rsi_m5}) : risque de retournement imminent.")
     if not achat and rsi_m5 < 20:
         raisons.append(f"RSI M5 en excès baissier ({rsi_m5}) : risque de rebond imminent.")
-
     cote = sltp["achat" if achat else "vente"] if sltp else None
     if cote is None:
         raisons.append("Pas d'objectif clair devant le prix.")
     elif not cote["ok"]:
         raisons.append(f"Ratio gain/risque faible ({cote['ratio']}, sous 1,5).")
-
     m5 = tfs["M5"]
     if m5["grande"]:
         raisons.append(f"Grosse bougie M5 (×{m5['taille_x']}). Le mouvement est déjà fait d'un coup.")
-
     if niv and h1_data:
         mm = h1_data["prix"] * 0.001
         if achat and niv["res_brut"] is not None and niv["res_brut"] - m5["prix"] < mm:
-            raisons.append(f"Résistance proche ({niv['res']}). Le prix peut buter contre.")
+            raisons.append(f"Résistance proche ({niv['res']}).")
         if not achat and niv["sup_brut"] is not None and m5["prix"] - niv["sup_brut"] < mm:
-            raisons.append(f"Support proche ({niv['sup']}). Le prix peut rebondir contre.")
-
+            raisons.append(f"Support proche ({niv['sup']}).")
     if historique:
         maintenant = time.time()
         for h in reversed(historique):
             if h["pair"] == pair and h["sens"] == sig:
                 age = (maintenant - h["t"]) / 60
                 if age < DUREE_SIGNAL_MIN:
-                    raisons.append(f"Signal {sig} identique donné il y a {int(age)} min. C'est le même mouvement.")
+                    raisons.append(f"Signal {sig} identique il y a {int(age)} min. Même mouvement.")
                 break
-
     for c in CORRELATIONS.get(pair, []):
         if c in autres_cond and autres_cond[c].get("signal") == sig:
-            raisons.append(f"{c} a le même signal. Prendre les deux = doubler ton risque.")
-
+            raisons.append(f"{c} a le même signal. Doubler ton risque.")
     if bt and bt["n"] >= 10 and bt["pct"] is not None and bt["pct"] < 45:
         raisons.append(f"Sur le passé, ce signal n'a réussi que {bt['pct']}% du temps.")
-
     bloquants = [r for r in raisons if "pullback" in r or "trop avancé" in r or "pas d'objectif" in r.lower() or "doubler ton risque" in r or "peu fiables" in r or "excès" in r]
     avertissements = [r for r in raisons if r not in bloquants]
-
     if timing and timing["niveau"] == "TARDIF":
         return {"verdict": "N'ENTRE PAS", "couleur": "rouge", "action": "ATTENDRE LE PROCHAIN CROISEMENT",
-                "message": f"Le signal {sig} sur {pair} est trop tardif. Le croisement EMA M5 date de {tfs['M5']['ema_depuis']} bougies. Attends un nouveau croisement.",
+                "message": f"Signal {sig} sur {pair} trop tardif. Croisement EMA M5 il y a {tfs['M5']['ema_depuis']} bougies. Attends un nouveau croisement.",
                 "raisons": raisons}
-
     if bloquants:
         return {"verdict": "N'ENTRE PAS", "couleur": "rouge", "action": "PASSER CE TRADE",
-                "message": f"J'ai détecté un signal {sig} sur {pair} MAIS quelque chose bloque. Ne prends pas ce trade en l'état.",
+                "message": f"Signal {sig} sur {pair} MAIS quelque chose bloque.",
                 "raisons": raisons}
-
     if avertissements:
         return {"verdict": "PRUDENCE — DEMI-LOT", "couleur": "jaune", "action": "RÉDUIRE LE LOT DE MOITIÉ",
-                "message": f"Signal {sig} sur {pair}, mais il y a des points de vigilance. Réduis ton lot de moitié.",
+                "message": f"Signal {sig} sur {pair}, points de vigilance. Réduis ton lot de moitié.",
                 "raisons": raisons}
-
     lot_msg = "lot plein" if not timing or timing["niveau"] == "FRAIS" else "demi-lot"
     rsi_mention = f" RSI M5 : {rsi_m5}." if rsi_m5 else ""
     return {"verdict": "ENTRE MAINTENANT", "couleur": "vert", "action": f"ACHAT/VENTE AU MARCHÉ — {lot_msg.upper()}",
@@ -635,19 +732,15 @@ def calc_stats(pair, h1, tfs):
     if len(h1) < 30:
         return None
     cl = h1[-1]["close"]
-
     def var(n):
         ref = h1[-min(n + 1, len(h1))]["close"]
         return round((cl - ref) / ref * 100, 2)
-
     j, s = h1[-24:], h1[-120:]
     haut24, bas24 = max(b["high"] for b in j), min(b["low"] for b in j)
     haut5, bas5 = max(b["high"] for b in s), min(b["low"] for b in s)
     pos = round((cl - bas24) / (haut24 - bas24) * 100) if haut24 > bas24 else 50
-
     def mouvement(liste):
         return float(np.mean([(b["high"] - b["low"]) / b["close"] * 100 for b in liste]))
-
     vol24, vol5 = mouvement(j), mouvement(s)
     if vol24 > vol5 * 1.3:
         vol_etat = "forte"
@@ -655,10 +748,8 @@ def calc_stats(pair, h1, tfs):
         vol_etat = "faible"
     else:
         vol_etat = "normale"
-
     d100 = h1[-100:]
     vertes = round(sum(1 for b in d100 if b["close"] > b["open"]) / len(d100) * 100, 1)
-
     sens, n_serie = 0, 0
     for b in reversed(h1):
         c = 1 if b["close"] > b["open"] else -1 if b["close"] < b["open"] else 0
@@ -670,7 +761,6 @@ def calc_stats(pair, h1, tfs):
             n_serie += 1
         else:
             break
-
     return {"var24": var(24), "var5j": var(120),
             "bas24": fp(pair, bas24), "haut24": fp(pair, haut24),
             "bas5j": fp(pair, bas5), "haut5j": fp(pair, haut5),
@@ -874,7 +964,6 @@ def conditions_paire(tfs, ferme=False, generale=None):
     h1, m30, m15, m5 = tfs["H1"], tfs["M30"], tfs["M15"], tfs["M5"]
     h4 = tfs.get("H4")
     trois = (("H1", h1), ("M30", m30), ("M15", m15))
-
     def verifier(sens):
         if sens == "haussier":
             fl, a, b, lab = "↑", "rsi", "rsi_bas", "RSI>50"
@@ -891,7 +980,6 @@ def conditions_paire(tfs, ferme=False, generale=None):
         d[f"M5 EMA{fl}"] = m5["ema_signal"] == sens
         bonus = bool(h4 and h4["tendance"] == sens)
         return d, bonus, fl
-
     res = {s: verifier(s) for s in ("haussier", "baissier")}
     timing = calc_timing_entree(m5)
     base = None
@@ -1013,13 +1101,11 @@ def analyser_paire(pair, source, historique=None, autres_cond=None):
                 series[tf] = bougies
             except Exception as e:
                 print(f"Erreur future {pair}: {e}")
-
     resultats = {}
     for tf, bougies in series.items():
         r = analyser(tf, bougies)
         if r:
             resultats[tf] = r
-
     fr = fraicheur(series.get("M5"))
     stats = calc_stats(pair, series.get("H1", []), resultats)
     generale = calc_tendance_generale(resultats)
@@ -1054,7 +1140,6 @@ def analyser_tout():
     with ThreadPoolExecutor(max_workers=4) as ex:
         for (pair, _), data in zip(taches, ex.map(lambda t: analyser_securise(*t), taches)):
             res[pair] = data
-
     autres_cond = {p: res[p]["cond"] for p in res}
     historique = session.get("historique", [])
     for pair, source in taches:
@@ -1062,12 +1147,10 @@ def analyser_tout():
             res[pair] = analyser_paire(pair, source, historique, autres_cond)
         except Exception as e:
             print(f"Erreur passe 2 {pair}: {e}")
-
     session_act = session_actuelle()
     journal = session.get("journal", [])
     maintenant = time.time()
     maintenant_txt = datetime.now(BENIN).strftime("%H:%M")
-
     for pair, d in res.items():
         conseil = generer_conseil(pair, d, session_act, autres_cond, historique)
         d["conseil_bot"] = conseil
@@ -1084,7 +1167,6 @@ def analyser_tout():
                             "raisons": conseil["raisons"], "prix": d["prix"]})
     journal = journal[-JOURNAL_MAX:]
     session["journal"] = journal
-
     for pair, d in res.items():
         cond = d["cond"]
         if cond["signal"] in ("ACHAT", "VENTE"):

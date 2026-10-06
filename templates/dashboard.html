@@ -102,6 +102,25 @@
 </div>
 {% endif %}
 
+{# ═════ LIGNE DE DÉCISION ULTRA-SIMPLE ═════ #}
+<div class="decision {{ c.couleur if c.signal in ('ACHAT','VENTE') else 'jaune' }}">
+<div class="decision-titre">
+{% if c.signal == 'ACHAT' %}🎯 DÉCISION : ACHAT
+{% elif c.signal == 'VENTE' %}🎯 DÉCISION : VENTE
+{% else %}🎯 DÉCISION : ATTENDRE{% endif %}
+</div>
+<div class="decision-pourquoi">
+{% set rsi_m5 = tfs['M5'].rsi if 'M5' in tfs else 50 %}
+Acheteurs : <b class="vert">{{ '%.1f'|format(rsi_m5) }}%</b> · Vendeurs : <b class="rouge">{{ '%.1f'|format(100 - rsi_m5) }}%</b>
+{% if gen %} · Tendance : <b class="{{ gen.couleur }}">{{ gen.tendance }}</b> (score {{ '%+.1f'|format(gen.score_pct) }}%){% endif %}
+</div>
+{% if d.guide %}
+<div class="decision-quand">
+Quand : à la clôture M5, vers <b>{{ d.guide.heure }}</b> · Stop : <b>{{ d.guide.stop }}</b> · Objectif : <b>{{ d.guide.objectif }}</b> · Lot : <span class="lotbox-inline" data-dist="{{ d.guide.dist }}" data-gain="{{ d.guide.dist_obj }}" data-contrat="{{ d.guide.contrat or '' }}" data-niveau="{{ d.guide.lot_niveau }}">—</span>
+</div>
+{% endif %}
+</div>
+
 {% if c.timing %}
 <div class="timing {{ c.timing.couleur }}">
 <span class="timing-emoji">{{ c.timing.emoji }}</span>
@@ -110,66 +129,42 @@
 </div>
 {% endif %}
 
-{# TENDANCE GÉNÉRALE — VOTE PONDÉRÉ + RSI #}
 {% if gen %}
 <div class="general {{ gen.couleur }}">
 <div class="general-titre">
 🧮 Tendance générale (vote pondéré des TF)
 <span class="general-badge {{ gen.couleur }}">{{ gen.tendance }}</span>
 </div>
-
 <div class="general-score">
 Score : <b class="{{ gen.couleur }}">{{ '%+.1f'|format(gen.score_pct) }}%</b>
 {% if gen.bonus != 0 %}<span class="pct">(bonus cohérence {{ '%+.0f'|format(gen.bonus) }})</span>{% endif %}
 </div>
-
 <div class="votes-detail">
 <b>Vote de chaque TF + RSI :</b>
 <div class="votes-list">
 {% for v in gen.votes_detail %}
 <span class="vote-item {{ 'vert' if v.vote > 0 else 'rouge' if v.vote < 0 else 'neutre' }}">
-{{ v.tf }}
-{% if v.vote > 0 %}↑ +1{% elif v.vote < 0 %}↓ −1{% else %}→ 0{% endif %}
-× poids {{ v.poids }}
-· RSI {{ v.rsi }}
+{{ v.tf }} {% if v.vote > 0 %}↑ +1{% elif v.vote < 0 %}↓ −1{% else %}→ 0{% endif %} × {{ v.poids }} · RSI {{ v.rsi }}
 </span>
 {% endfor %}
 </div>
-<div class="votes-formule">
-Formule : (somme des votes × poids) / somme des poids × 100
+<div class="votes-formule">Formule : (somme des votes × poids) / somme des poids × 100</div>
 </div>
-</div>
-
 <div class="general-chiffres" style="margin-top:.6rem;">
 <span class="vert">🟢 RSI pondéré global {{ gen.rsi_gen }}%</span>
 <span class="rouge">🔴 Complément {{ gen.ven_gen }}%</span>
 </div>
-
-<div class="general-align">
-<b>Alignement progressif :</b>
-<div class="align-chaine">
-{% for a in gen.align_detail %}
-<span class="align-item {{ 'vert' if a.sens == 'haussier' else 'rouge' if a.sens == 'baissier' else 'neutre' }}">
-{{ a.tf }}{% if a.sens == 'haussier' %}↑{% elif a.sens == 'baissier' %}↓{% else %}→{% endif %}
-</span>
-{% if not loop.last %}<span class="align-fleche">→</span>{% endif %}
+{% if gen.continuations %}
+<div class="continuations-box">
+<b>🔁 Signaux de continuation détectés :</b>
+<ul>
+{% for m in gen.continuations %}
+<li class="{{ 'vert' if m.sens == 'haussier' else 'rouge' }}">
+<b>{{ m.tf }}</b> · {{ m.nom }} (fiabilité {{ m.fiabilite }}%) — {{ m.desc }}
+</li>
 {% endfor %}
+</ul>
 </div>
-{% if gen.align_n >= 3 and gen.align_sens %}
-<div class="align-verdict {{ 'vert' if gen.align_sens == 'haussier' else 'rouge' }}">
-✅ {{ gen.align_n }} TF consécutifs alignés {{ gen.align_sens }} — mouvement récent cohérent.
-</div>
-{% elif gen.align_n > 0 and gen.align_sens %}
-<div class="align-verdict jaune">
-⚠️ Seulement {{ gen.align_n }} TF aligné(s) {{ gen.align_sens }} — pas encore de consensus.
-</div>
-{% else %}
-<div class="align-verdict jaune">⏸️ Aucun alignement progressif net.</div>
-{% endif %}
-</div>
-
-{% if gen.confirmation %}
-<div class="confirmation {{ gen.confirmation.couleur }}">{{ gen.confirmation.txt }}</div>
 {% endif %}
 </div>
 {% endif %}
@@ -189,7 +184,7 @@ Formule : (somme des votes × poids) / somme des poids × 100
 <div class="lot-conseil {{ 'vert' if g.lot_niveau == 'PLEIN' else 'jaune' if g.lot_niveau == 'DEMI' else 'rouge' }}">
 🧮 <b>Lot :</b> {{ g.lot_txt }}
 </div>
-<li><b>Mi-chemin :</b> si le prix atteint <b>{{ g.moitie }}</b>, tu peux remonter ton stop à ton prix d'entrée.</li>
+<li><b>Mi-chemin :</b> si le prix atteint <b>{{ g.moitie }}</b>, remonte ton stop à ton prix d'entrée.</li>
 {% endif %}
 <li><b>Si ça tourne mal :</b> stop touché → accepte la perte, arrête-toi 30 min sur cette paire.</li>
 <li><b>Règle de survie :</b> max 1 % par trade. Après 2 pertes de suite, arrête pour la journée.</li>
@@ -198,22 +193,10 @@ Formule : (somme des votes × poids) / somme des poids × 100
 </div>
 {% endif %}
 
-{% if s %}
-<h3>📈 Stats</h3>
-<div class="stats">
-<div class="tile"><small>Var 24h</small><b class="{{ 'vert' if s.var24 >= 0 else 'rouge' }}">{{ '%+.2f'|format(s.var24) }}%</b></div>
-<div class="tile"><small>Var 5j</small><b class="{{ 'vert' if s.var5j >= 0 else 'rouge' }}">{{ '%+.2f'|format(s.var5j) }}%</b></div>
-<div class="tile"><small>Fourchette 24h</small><b class="mini">{{ s.bas24 }} → {{ s.haut24 }}</b></div>
-<div class="tile"><small>Position 24h</small><b>{{ s.position }}%</b><div class="jauge"><i style="left:{{ s.position }}%"></i></div></div>
-<div class="tile"><small>Mouv. moyen H1</small><b>{{ '%.3f'|format(s.vol24) }}%</b> <em class="etat">{{ s.vol_etat }}</em></div>
-<div class="tile"><small>Bougies vertes H1</small><b class="{{ 'vert' if s.vertes >= 50 else 'rouge' }}">{{ s.vertes }}%</b></div>
-</div>
-{% endif %}
-
-<h3>⏱️ Analyse par timeframe — RSI (période adaptée)</h3>
+<h3>⏱️ Analyse par timeframe — RSI et motifs de continuation</h3>
 <div class="scroll">
 <table>
-<thead><tr><th>TF</th><th>Poids</th><th>Bougies</th><th>RSI</th><th>RSI Pér.</th><th>Tendance</th><th>Pente</th><th>Agit</th><th>Div.</th><th>Signal EMA</th><th>Cassure</th><th>Bougie</th></tr></thead>
+<thead><tr><th>TF</th><th>Poids</th><th>RSI</th><th>RSI Pér.</th><th>Acheteurs</th><th>Vendeurs</th><th>Tendance</th><th>Motifs de continuation</th><th>Signal EMA</th></tr></thead>
 <tbody>
 {% for tf in ["H4", "H1", "M30", "M15", "M5"] %}
 {% if tf in tfs %}
@@ -221,13 +204,18 @@ Formule : (somme des votes × poids) / somme des poids × 100
 <tr class="{% if t.tendance == 'haussier' %}row-h{% elif t.tendance == 'baissier' %}row-b{% endif %}">
 <td><b>{{ t.tf }}</b></td>
 <td><span class="poids">×{{ {'H4':1,'H1':2,'M30':3,'M15':4,'M5':5}[tf] }}</span></td>
-<td><span class="pct">{{ t.periode_tend }}b</span></td>
 <td class="{% if t.rsi >= 70 %}rouge{% elif t.rsi <= 30 %}vert{% endif %}"><b>{{ t.rsi }}</b></td>
 <td><span class="pct">{{ t.rsi_periode }}</span></td>
+<td class="vert"><b>{{ t.pct_acheteurs }}%</b></td>
+<td class="rouge"><b>{{ t.pct_vendeurs }}%</b></td>
 <td>{{ t.tendance }}</td>
-<td class="{{ 'vert' if t.pct_tendance > 0 else 'rouge' if t.pct_tendance < 0 else '' }}">{{ '%+.2f'|format(t.pct_tendance) }}</td>
-<td>{{ t.pct_agitation }}%</td>
-<td>{{ 'H' if t.divergence == 'haussiere' else 'B' if t.divergence == 'baissiere' else '—' }}</td>
+<td>
+{% if t.continuation %}
+{% for m in t.continuation %}
+<span class="tag {{ 'vert' if m.sens == 'haussier' else 'rouge' }}">{{ m.nom }} ({{ m.fiabilite }}%)</span>
+{% endfor %}
+{% else %}—{% endif %}
+</td>
 <td class="{% if t.ema_signal == 'haussier' %}vert{% elif t.ema_signal == 'baissier' %}rouge{% endif %}"><b>{{ t.ema_signal or '—' }}</b>
 {% if tf == 'M5' and t.ema_depuis is not none %}
 {% set dep = t.ema_depuis %}
@@ -236,8 +224,6 @@ Formule : (somme des votes × poids) / somme des poids × 100
 {% else %}<span class="timing-mini rouge">❌ {{ dep }} bg</span>{% endif %}
 {% endif %}
 </td>
-<td>{% if t.cassure.sens == 'haussiere' %}<span class="vert">↑</span>{% elif t.cassure.sens == 'baissiere' %}<span class="rouge">↓</span>{% else %}—{% endif %}</td>
-<td>{% for m in t.motifs %}<span class="tag {{ m.cls }}">{{ m.txt }}</span> {% else %}—{% endfor %}</td>
 </tr>
 {% endif %}
 {% endfor %}
@@ -262,17 +248,14 @@ Formule : (somme des votes × poids) / somme des poids × 100
 {% endfor %}
 
 <details class="aide">
-<summary>ℹ️ Comment lire le bot — RSI et tendance générale</summary>
+<summary>ℹ️ Comment lire le bot — RSI, tendance et motifs de continuation</summary>
 <ul>
-<li><b>📊 RSI</b> : le RSI (Relative Strength Index) est l'indicateur standard pour mesurer la force acheteuse/vendeuse. C'est celui de TradingView, MT5, et toutes les plateformes sérieuses. <b>RSI 70 = 70% de force acheteuse. RSI 30 = 70% de force vendeuse.</b></li>
-<li><b>Période RSI</b> : 14 = standard (comparable à TradingView). 7 sur M5 car le marché bouge vite.</li>
-<li><b>Interprétation</b> : RSI 50 = équilibré · RSI 60-70 = force haussière · RSI 70+ = suracheté (risque de retournement) · RSI 30-40 = force baissière · RSI < 30 = survendu (rebond possible).</li>
-<li><b>🧮 Tendance générale</b> = vote pondéré des TF : +1 (haussier), −1 (baissier), 0 (neutre), × poids du TF (M5×5, M15×4, M30×3, H1×2, H4×1).</li>
-<li><b>Exemple</b> : 4 TF haussiers + 1 baissier = (+4+3+2+1 −5)/15 = +33% → ACHAT.</li>
-<li><b>Bonus cohérence</b> : +10% si TOUS les TF alignés, −10% sinon.</li>
-<li><b>🤖 Ce qui te fait ENTRER</b> : tendance générale ACHAT/VENTE + croisement EMA M5 frais + tous les filtres verts + le bot dit "ENTRE MAINTENANT".</li>
-<li><b>⚠️ RSI en excès</b> : si RSI M5 > 80 en ACHAT, le bot te prévient d'un risque de retournement.</li>
-<li><b>🔔 Son + 🔊 Voix</b> : alerte quand signal change ou verdict change.</li>
+<li><b>📊 Acheteurs / Vendeurs</b> : basé sur le RSI standard (comparable TradingView). RSI 70 = 70% acheteurs. RSI 30 = 70% vendeurs.</li>
+<li><b>🔁 Motifs de continuation</b> : le bot détecte les motifs réputés selon Bulkowski (statistiques sur le passé) : Rising/Falling Three Methods, Separating Lines, Deliberation, Three Line Strike. Les fiabilités affichées sont celles de Bulkowski.</li>
+<li><b>🧮 Tendance générale</b> = vote pondéré des TF : +1 (haussier), −1 (baissier), 0 (neutre), × poids (M5×5, M15×4...).</li>
+<li><b>🎯 Ligne DÉCISION</b> : en haut de chaque paire, la décision claire (ACHAT / VENTE / ATTENDRE), le % acheteurs/vendeurs, la tendance, et les niveaux si signal.</li>
+<li><b>⚠️ Avertissement 10 $</b> : avec 10 $ de capital et 1% de risque, tu ne peux pas respecter le stop sur la plupart des paires. Le bot te dira "Capital trop petit". Si tu prends quand même, tu risques 3-5% par trade.</li>
+<li><b>🔔 Son + 🔊 Voix</b> : alerte vocale en français quand signal ou verdict change.</li>
 </ul>
 </details>
 
@@ -348,6 +331,7 @@ function calcLots() {
     if (cap) localStorage.setItem('capital', String(cap));
     if (risk) localStorage.setItem('risque', String(risk));
   } catch (e) {}
+  // Calcul classique
   document.querySelectorAll('.lotbox').forEach(function (el) {
     var out = el.querySelector('.lotres');
     var dist = parseFloat(el.dataset.dist);
@@ -359,9 +343,25 @@ function calcLots() {
     if (niveau === 'DEMI') maxp = maxp / 2;
     if (!ct) { out.textContent = 'Lot non calculé. Perte max ' + maxp.toFixed(2) + ' $.'; return; }
     var lot = Math.floor(maxp / (dist * ct) * 100) / 100;
-    if (lot < 0.01) { out.textContent = 'Capital trop petit pour ce stop.'; return; }
+    if (lot < 0.01) {
+      out.textContent = '⚠️ 0.01 lot minimum : avec ' + cap.toFixed(0) + ' $, tu risques plus que ' + risk + ' % par trade.';
+      return;
+    }
     var prefix = niveau === 'DEMI' ? 'Lot (demi) : ' : 'Lot : ';
     out.textContent = prefix + lot.toFixed(2) + ' → perte max ≈ ' + (lot * dist * ct).toFixed(2) + ' $ · gain ≈ ' + (lot * gain * ct).toFixed(2) + ' $';
+  });
+  // Version inline (ligne décision)
+  document.querySelectorAll('.lotbox-inline').forEach(function (el) {
+    var dist = parseFloat(el.dataset.dist);
+    var ct = parseFloat(el.dataset.contrat);
+    var niveau = el.dataset.niveau || 'PLEIN';
+    if (!cap || !risk) { el.textContent = '—'; return; }
+    var maxp = cap * risk / 100;
+    if (niveau === 'DEMI') maxp = maxp / 2;
+    if (!ct) { el.textContent = 'max ' + maxp.toFixed(2) + ' $'; return; }
+    var lot = Math.floor(maxp / (dist * ct) * 100) / 100;
+    if (lot < 0.01) { el.textContent = '0.01 min (risque > ' + risk + '%)'; return; }
+    el.textContent = lot.toFixed(2);
   });
 }
 try {
