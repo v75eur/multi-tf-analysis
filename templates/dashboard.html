@@ -5,6 +5,7 @@
 <div>
 <span class="time">{{ now }}</span>
 <button id="son" class="son" type="button">🔕 Son</button>
+<button id="voix" class="son" type="button">🔇 Voix</button>
 <span class="countdown">🔄 <span id="countdown">5min 0s</span></span>
 <a href="/logout" class="logout">🚪</a>
 </div>
@@ -126,11 +127,7 @@
 </div>
 <div class="general-score">
 Score pondéré : <b class="{{ gen.couleur }}">{{ '%+.1f'|format(gen.score_pct) }}%</b>
-{% if gen.coherence_bonus != 0 %}<span class="pct">(cohérence {{ '%+.0f'|format(gen.coherence_bonus) }})</span>{% endif %}
-<span class="pct">· Puissance <b>{{ gen.puissance_globale }}%</b></span>
-</div>
-<div class="general-score pct" style="margin-top:.2rem;">
-Méthode : pondération par TF (M5×5 M15×4 M30×3 H1×2 H4×1) + intensité acheteurs/vendeurs + puissance + cohérence
+<span class="pct">(M5×5 · M15×4 · M30×3 · H1×2 · H4×1 — les petits TF pèsent plus lourd)</span>
 </div>
 </div>
 
@@ -202,10 +199,10 @@ Méthode : pondération par TF (M5×5 M15×4 M30×3 H1×2 H4×1) + intensité ac
 </div>
 {% endif %}
 
-<h3>⏱️ Analyse par timeframe (calculs pondérés)</h3>
+<h3>⏱️ Analyse par timeframe (périodes adaptées)</h3>
 <div class="scroll">
 <table>
-<thead><tr><th>TF</th><th>Poids</th><th>Tendance</th><th>Pente</th><th>Accél</th><th>Puissance</th><th>Ach/Ven</th><th>Force</th><th>Agit</th><th>Signal EMA</th><th>Bougie</th></tr></thead>
+<thead><tr><th>TF</th><th>Poids</th><th>Bougies</th><th>Tendance</th><th>Ach/Ven</th><th>Agit</th><th>Div.</th><th>EMA5</th><th>EMA25</th><th>Signal EMA</th><th>Cassure</th><th>Bougie</th></tr></thead>
 <tbody>
 {% for tf in ["H4", "H1", "M30", "M15", "M5"] %}
 {% if tf in tfs %}
@@ -213,13 +210,13 @@ Méthode : pondération par TF (M5×5 M15×4 M30×3 H1×2 H4×1) + intensité ac
 <tr class="{% if t.tendance == 'haussier' %}row-h{% elif t.tendance == 'baissier' %}row-b{% endif %}">
 <td><b>{{ t.tf }}</b></td>
 <td><span class="poids">×{{ {'H4':1,'H1':2,'M30':3,'M15':4,'M5':5}[tf] }}</span></td>
-<td>{{ t.tendance }}</td>
-<td class="{{ 'vert' if t.pente_pct > 0 else 'rouge' if t.pente_pct < 0 else '' }}">{{ '%+.2f'|format(t.pente_pct) }}</td>
-<td class="{{ 'vert' if t.acceleration > 0.01 else 'rouge' if t.acceleration < -0.01 else '' }}">{{ '%+.2f'|format(t.acceleration) }}</td>
-<td><b class="{{ 'vert' if t.puissance >= 30 else 'rouge' if t.puissance < 10 else '' }}">{{ t.puissance }}%</b></td>
-<td><small><span class="vert">{{ t.pct_acheteurs }}</span>/<span class="rouge">{{ t.pct_vendeurs }}</span></small></td>
-<td>{{ t.force_brute }}%</td>
+<td><span class="pct">{{ t.periode_ach }}b</span></td>
+<td>{{ t.tendance }} <span class="pct">{{ t.pct_tendance }}%</span></td>
+<td class="duelcell"><div class="duel"><i style="width:{{ t.pct_acheteurs }}%"></i></div><small><span class="vert">{{ t.pct_acheteurs }}</span> / <span class="rouge">{{ t.pct_vendeurs }}</span></small></td>
 <td>{{ t.pct_agitation }}%</td>
+<td>{{ 'H' if t.divergence == 'haussiere' else 'B' if t.divergence == 'baissiere' else '—' }}</td>
+<td>{{ t.ema5 or '—' }}</td>
+<td>{{ t.ema25 or '—' }}</td>
 <td class="{% if t.ema_signal == 'haussier' %}vert{% elif t.ema_signal == 'baissier' %}rouge{% endif %}"><b>{{ t.ema_signal or '—' }}</b>
 {% if tf == 'M5' and t.ema_depuis is not none %}
 {% set dep = t.ema_depuis %}
@@ -228,6 +225,7 @@ Méthode : pondération par TF (M5×5 M15×4 M30×3 H1×2 H4×1) + intensité ac
 {% else %}<span class="timing-mini rouge">❌ {{ dep }} bg</span>{% endif %}
 {% endif %}
 </td>
+<td>{% if t.cassure.sens == 'haussiere' %}<span class="vert">↑</span>{% elif t.cassure.sens == 'baissiere' %}<span class="rouge">↓</span>{% else %}—{% endif %}{% if t.cassure.il_y_a is not none %} <span class="pct">{{ 'now' if t.cassure.il_y_a == 0 else t.cassure.il_y_a ~ ' bg' }}</span>{% endif %}</td>
 <td>{% for m in t.motifs %}<span class="tag {{ m.cls }}">{{ m.txt }}</span> {% else %}—{% endfor %}</td>
 </tr>
 {% endif %}
@@ -253,23 +251,15 @@ Méthode : pondération par TF (M5×5 M15×4 M30×3 H1×2 H4×1) + intensité ac
 {% endfor %}
 
 <details class="aide">
-<summary>ℹ️ Comment lire le bot — Calculs pondérés</summary>
+<summary>ℹ️ Comment lire le bot</summary>
 <ul>
 <li><b>🤖 Le bot te dit quoi faire</b> : "ENTRE MAINTENANT" (vert), "PRUDENCE — DEMI-LOT" (jaune), "N'ENTRE PAS" (rouge), "ATTENDRE" (gris).</li>
-<li><b>📊 % Acheteurs/Vendeurs pondéré</b> : nouveau calcul qui prend en compte la taille de chaque bougie, la position de la clôture dans son range (les mèches), le corps de la bougie, et la volatilité relative. Ce n'est plus un simple comptage vert/rouge.</li>
-<li><b>📈 Pente</b> : régression linéaire en % du prix. Positif = haussier, négatif = baissier.</li>
-<li><b>⚡ Accélération</b> : la pente récente comparée à la pente ancienne. Positif = le mouvement s'accélère, négatif = il ralentit.</li>
-<li><b>💪 Puissance</b> : amplitude nette du mouvement divisée par la volatilité moyenne. 0-100%. Élevé = mouvement fort et directionnel, faible = marché qui hésite.</li>
-<li><b>Force brute</b> : intensité du déséquilibre acheteurs/vendeurs, de 0 à 100%.</li>
-<li><b>🧮 Tendance générale pondérée</b> : combine TOUS les TF avec :
-  <ul>
-    <li>Un poids par TF (M5×5, M15×4, M30×3, H1×2, H4×1) — les petits pèsent plus lourd</li>
-    <li>L'intensité de l'écart acheteurs/vendeurs (pas juste +1/-1)</li>
-    <li>La puissance du TF (un TF faible pèse moins)</li>
-    <li>Un bonus de cohérence (+15% si tous alignés dans le même sens)</li>
-  </ul>
-</li>
+<li><b>📊 Bougies analysées par TF</b> : on augmente le nombre pour les petits TF car ils bougent vite. M5 = 30 bougies (2h30), M15 = 25 (6h), M30 = 20 (10h), H1 = 15 (15h), H4 = 10 (40h). Ça évite les faux signaux sur M5/M15.</li>
+<li><b>🧮 Tendance générale pondérée</b> : combine tous les TF. Les petits pèsent plus lourd (M5×5, M15×4, M30×3, H1×2, H4×1). Score entre -100% et +100%. +25% = ACHAT, +60% = ACHAT FORT.</li>
+<li><b>Alignement progressif</b> : on regarde M5 → M15 → M30 → H1. Si les 4 sont dans le même sens, le mouvement est cohérent.</li>
 <li><b>🔥 Timing d'entrée</b> : ≤5 bougies M5 depuis le croisement EMA = frais (lot plein), 6-12 = en cours (demi-lot), >12 = tardif (n'entre pas).</li>
+<li><b>🔔 Son</b> : bip + vibration quand un signal change ou qu'un verdict change. Le son "fort" (4 notes) est pour ENTRE MAINTENANT.</li>
+<li><b>🔊 Voix</b> : annonce vocale en français quand un événement important arrive. Active/désactive avec le bouton "Voix".</li>
 <li>Toutes les bougies en cours sont ignorées : seules les clôturées comptent.</li>
 <li>Teste en démo 2-3 semaines minimum.</li>
 </ul>
@@ -280,12 +270,19 @@ Méthode : pondération par TF (M5×5 M15×4 M30×3 H1×2 H4×1) + intensité ac
 var sec = 300;
 var audioCtx = null;
 var sonOn = false;
-try { sonOn = localStorage.getItem('son') === '1'; } catch (e) {}
+var voixOn = false;
+try {
+  sonOn = localStorage.getItem('son') === '1';
+  voixOn = localStorage.getItem('voix') === '1';
+} catch (e) {}
 
-function majBouton() {
+function majBoutons() {
   var b = document.getElementById('son');
   if (b) b.textContent = sonOn ? '🔔 Son activé' : '🔕 Son';
+  var v = document.getElementById('voix');
+  if (v) v.textContent = voixOn ? '🔊 Voix activée' : '🔇 Voix';
 }
+
 function bip(niveau) {
   try {
     if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -302,6 +299,21 @@ function bip(niveau) {
     if (navigator.vibrate) navigator.vibrate(niveau === 'fort' ? [300, 100, 300, 100, 300] : [200, 100, 200]);
   } catch (e) {}
 }
+
+function parler(txt) {
+  if (!voixOn) return;
+  try {
+    if (!('speechSynthesis' in window)) return;
+    window.speechSynthesis.cancel();
+    var u = new SpeechSynthesisUtterance(txt);
+    u.lang = 'fr-FR';
+    u.rate = 1.05;
+    u.pitch = 1.0;
+    u.volume = 1.0;
+    window.speechSynthesis.speak(u);
+  } catch (e) {}
+}
+
 function lireSignaux() {
   var o = {};
   document.querySelectorAll('section.paire').forEach(function (s) { o[s.id] = s.dataset.signal; });
@@ -356,13 +368,28 @@ calcLots();
 document.getElementById('son').addEventListener('click', function () {
   sonOn = !sonOn;
   try { localStorage.setItem('son', sonOn ? '1' : '0'); } catch (e) {}
-  majBouton();
+  majBoutons();
   if (sonOn) bip('moyen');
 });
-majBouton();
+
+document.getElementById('voix').addEventListener('click', function () {
+  voixOn = !voixOn;
+  try { localStorage.setItem('voix', voixOn ? '1' : '0'); } catch (e) {}
+  majBoutons();
+  if (voixOn) parler('Voix activée');
+});
+majBoutons();
 
 var precedent = lireSignaux();
 var precedentsVerdicts = lireVerdicts();
+
+// Annonce initiale si un signal est déjà présent
+if (voixOn) {
+  var sigInit = Object.keys(precedent).filter(function (k) { return estSignal(precedent[k]); });
+  if (sigInit.length) {
+    setTimeout(function () { parler('Attention, signaux actifs : ' + sigInit.join(', ')); }, 1500);
+  }
+}
 
 var enCours = false;
 async function rafraichir() {
@@ -381,23 +408,40 @@ async function rafraichir() {
     var nouveaux = lireSignaux();
     var nouveauxVerdicts = lireVerdicts();
     var alertes = [];
+    var voixMsg = [];
+
     Object.keys(nouveaux).forEach(function (k) {
-      if (estSignal(nouveaux[k]) && precedent[k] !== nouveaux[k]) alertes.push('🔔 ' + nouveaux[k] + ' ' + k);
+      // Nouveau signal
+      if (estSignal(nouveaux[k]) && precedent[k] !== nouveaux[k]) {
+        alertes.push('🔔 ' + nouveaux[k] + ' ' + k);
+        voixMsg.push(nouveaux[k] + ' sur ' + k);
+      }
+      // Verdict changé
       var vOld = precedentsVerdicts[k];
       var vNew = nouveauxVerdicts[k];
       if (vNew && vOld && vOld !== vNew) {
-        if (vNew.indexOf('ENTRE') >= 0) alertes.push('✅ ' + k + ' → ' + vNew);
-        else if (vNew.indexOf("N'ENTRE") >= 0) alertes.push('🚫 ' + k + ' → ' + vNew);
-        else if (vNew.indexOf('PRUDENCE') >= 0) alertes.push('⚠️ ' + k + ' → ' + vNew);
+        if (vNew.indexOf('ENTRE') >= 0) {
+          alertes.push('✅ ' + k + ' → ' + vNew);
+          voixMsg.push('Entre maintenant sur ' + k);
+        } else if (vNew.indexOf("N'ENTRE") >= 0) {
+          alertes.push('🚫 ' + k + ' → ' + vNew);
+          voixMsg.push('N entre pas sur ' + k);
+        } else if (vNew.indexOf('PRUDENCE') >= 0) {
+          alertes.push('⚠️ ' + k + ' → ' + vNew);
+          voixMsg.push('Prudence sur ' + k);
+        }
       }
     });
+
     precedent = nouveaux;
     precedentsVerdicts = nouveauxVerdicts;
+
     if (alertes.length) {
       if (sonOn) {
         var fort = alertes.some(function (a) { return a.indexOf('✅') === 0; });
         bip(fort ? 'fort' : 'moyen');
       }
+      if (voixMsg.length) parler(voixMsg.join('. '));
       document.title = '🔔 ' + alertes.join(' · ');
       var barre = document.createElement('div');
       barre.style.cssText = 'position:fixed;top:0;left:0;right:0;background:linear-gradient(90deg,#00d4ff,#7b2ffc);color:#fff;padding:.6rem 1rem;font-weight:700;font-size:.85rem;z-index:9999;text-align:center;';

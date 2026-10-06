@@ -152,11 +152,10 @@ h3{font-size:.8rem;color:var(--muted);text-transform:uppercase;letter-spacing:.0
 .tile b{font-size:.95rem}
 .tile b.mini{font-size:.72rem}
 .tile .etat{font-style:normal;font-size:.7rem;color:var(--cyan)}
-.tile .sous{font-size:.7rem;color:var(--muted);margin-top:.3rem}
 .jauge{height:6px;border-radius:4px;background:linear-gradient(90deg,rgba(255,95,87,.5),rgba(255,189,46,.4),rgba(40,200,64,.5));position:relative;margin-top:.5rem}
 .jauge i{position:absolute;top:-3px;width:4px;height:12px;border-radius:2px;background:#fff;transform:translateX(-50%)}
 .scroll{overflow-x:auto}
-table{width:100%;min-width:960px;border-collapse:collapse;font-size:.85rem}
+table{width:100%;min-width:900px;border-collapse:collapse;font-size:.85rem}
 th{color:var(--cyan);text-align:left;padding:.4rem;border-bottom:2px solid rgba(0,212,255,.3);font-size:.68rem;text-transform:uppercase;white-space:nowrap}
 td{padding:.4rem;border-bottom:1px solid rgba(255,255,255,.05);white-space:nowrap}
 .pct{color:var(--muted);font-size:.75rem}
@@ -164,6 +163,10 @@ td{padding:.4rem;border-bottom:1px solid rgba(255,255,255,.05);white-space:nowra
 .rouge{color:var(--red)}
 .jaune{color:var(--yellow)}
 .poids{font-size:.7rem;padding:.15rem .45rem;border-radius:50px;background:rgba(0,212,255,.12);color:var(--cyan);font-weight:600}
+.duelcell{min-width:90px}
+.duelcell small{font-size:.7rem}
+.duel{height:6px;background:var(--red);border-radius:4px;overflow:hidden;margin-bottom:.2rem}
+.duel i{display:block;height:100%;background:var(--green)}
 .tag{display:inline-block;font-size:.66rem;padding:.15rem .45rem;border-radius:50px;background:rgba(255,255,255,.06)}
 .tag.vert{background:rgba(40,200,64,.15)}
 .tag.rouge{background:rgba(255,95,87,.15)}
@@ -177,7 +180,6 @@ td{padding:.4rem;border-bottom:1px solid rgba(255,255,255,.05);white-space:nowra
 .aide{background:var(--card);border-radius:12px;padding:.8rem 1rem;font-size:.8rem;color:var(--muted);margin-bottom:1rem}
 .aide summary{cursor:pointer;color:var(--cyan)}
 .aide ul{margin:.6rem 0 0 1.1rem;line-height:1.7}
-.aide ul ul{margin:.3rem 0 0 1.1rem}
 
 @media(max-width:600px){
   body{padding:.5rem}
