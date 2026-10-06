@@ -110,7 +110,7 @@
 </div>
 {% endif %}
 
-{# ═════ TENDANCE GÉNÉRALE CORRIGÉE ═════ #}
+{# TENDANCE GÉNÉRALE — VOTE PONDÉRÉ + RSI #}
 {% if gen %}
 <div class="general {{ gen.couleur }}">
 <div class="general-titre">
@@ -124,13 +124,14 @@ Score : <b class="{{ gen.couleur }}">{{ '%+.1f'|format(gen.score_pct) }}%</b>
 </div>
 
 <div class="votes-detail">
-<b>Vote de chaque TF :</b>
+<b>Vote de chaque TF + RSI :</b>
 <div class="votes-list">
 {% for v in gen.votes_detail %}
 <span class="vote-item {{ 'vert' if v.vote > 0 else 'rouge' if v.vote < 0 else 'neutre' }}">
 {{ v.tf }}
 {% if v.vote > 0 %}↑ +1{% elif v.vote < 0 %}↓ −1{% else %}→ 0{% endif %}
 × poids {{ v.poids }}
+· RSI {{ v.rsi }}
 </span>
 {% endfor %}
 </div>
@@ -140,38 +141,35 @@ Formule : (somme des votes × poids) / somme des poids × 100
 </div>
 
 <div class="general-chiffres" style="margin-top:.6rem;">
-<span class="vert">🟢 Acheteurs pondérés {{ gen.ach_gen }}%</span>
-<span class="rouge">🔴 Vendeurs pondérés {{ gen.ven_gen }}%</span>
+<span class="vert">🟢 RSI pondéré global {{ gen.rsi_gen }}%</span>
+<span class="rouge">🔴 Complément {{ gen.ven_gen }}%</span>
 </div>
 
 <div class="general-align">
-<b>Alignement progressif (du plus petit au plus grand) :</b>
+<b>Alignement progressif :</b>
 <div class="align-chaine">
 {% for a in gen.align_detail %}
 <span class="align-item {{ 'vert' if a.sens == 'haussier' else 'rouge' if a.sens == 'baissier' else 'neutre' }}">
-{{ a.tf }}
-{% if a.sens == 'haussier' %}↑{% elif a.sens == 'baissier' %}↓{% else %}→{% endif %}
+{{ a.tf }}{% if a.sens == 'haussier' %}↑{% elif a.sens == 'baissier' %}↓{% else %}→{% endif %}
 </span>
 {% if not loop.last %}<span class="align-fleche">→</span>{% endif %}
 {% endfor %}
 </div>
 {% if gen.align_n >= 3 and gen.align_sens %}
 <div class="align-verdict {{ 'vert' if gen.align_sens == 'haussier' else 'rouge' }}">
-✅ {{ gen.align_n }} TF consécutifs alignés {{ 'haussier' if gen.align_sens == 'haussier' else 'baissier' }} — mouvement récent cohérent.
+✅ {{ gen.align_n }} TF consécutifs alignés {{ gen.align_sens }} — mouvement récent cohérent.
 </div>
 {% elif gen.align_n > 0 and gen.align_sens %}
 <div class="align-verdict jaune">
-⚠️ Seulement {{ gen.align_n }} TF aligné(s) {{ gen.align_sens }} — pas encore de consensus progressif.
+⚠️ Seulement {{ gen.align_n }} TF aligné(s) {{ gen.align_sens }} — pas encore de consensus.
 </div>
 {% else %}
-<div class="align-verdict jaune">⏸️ Aucun alignement progressif net pour le moment.</div>
+<div class="align-verdict jaune">⏸️ Aucun alignement progressif net.</div>
 {% endif %}
 </div>
 
 {% if gen.confirmation %}
-<div class="confirmation {{ gen.confirmation.couleur }}">
-{{ gen.confirmation.txt }}
-</div>
+<div class="confirmation {{ gen.confirmation.couleur }}">{{ gen.confirmation.txt }}</div>
 {% endif %}
 </div>
 {% endif %}
@@ -212,10 +210,10 @@ Formule : (somme des votes × poids) / somme des poids × 100
 </div>
 {% endif %}
 
-<h3>⏱️ Analyse par timeframe (périodes adaptées)</h3>
+<h3>⏱️ Analyse par timeframe — RSI (période adaptée)</h3>
 <div class="scroll">
 <table>
-<thead><tr><th>TF</th><th>Poids</th><th>Bougies</th><th>Tendance</th><th>Pente</th><th>Ach/Ven</th><th>Agit</th><th>Div.</th><th>EMA5</th><th>EMA25</th><th>Signal EMA</th><th>Cassure</th><th>Bougie</th></tr></thead>
+<thead><tr><th>TF</th><th>Poids</th><th>Bougies</th><th>RSI</th><th>RSI Pér.</th><th>Tendance</th><th>Pente</th><th>Agit</th><th>Div.</th><th>Signal EMA</th><th>Cassure</th><th>Bougie</th></tr></thead>
 <tbody>
 {% for tf in ["H4", "H1", "M30", "M15", "M5"] %}
 {% if tf in tfs %}
@@ -223,14 +221,13 @@ Formule : (somme des votes × poids) / somme des poids × 100
 <tr class="{% if t.tendance == 'haussier' %}row-h{% elif t.tendance == 'baissier' %}row-b{% endif %}">
 <td><b>{{ t.tf }}</b></td>
 <td><span class="poids">×{{ {'H4':1,'H1':2,'M30':3,'M15':4,'M5':5}[tf] }}</span></td>
-<td><span class="pct">{{ t.periode_ach }}b</span></td>
+<td><span class="pct">{{ t.periode_tend }}b</span></td>
+<td class="{% if t.rsi >= 70 %}rouge{% elif t.rsi <= 30 %}vert{% endif %}"><b>{{ t.rsi }}</b></td>
+<td><span class="pct">{{ t.rsi_periode }}</span></td>
 <td>{{ t.tendance }}</td>
 <td class="{{ 'vert' if t.pct_tendance > 0 else 'rouge' if t.pct_tendance < 0 else '' }}">{{ '%+.2f'|format(t.pct_tendance) }}</td>
-<td class="duelcell"><div class="duel"><i style="width:{{ t.pct_acheteurs }}%"></i></div><small><span class="vert">{{ t.pct_acheteurs }}</span> / <span class="rouge">{{ t.pct_vendeurs }}</span></small></td>
 <td>{{ t.pct_agitation }}%</td>
 <td>{{ 'H' if t.divergence == 'haussiere' else 'B' if t.divergence == 'baissiere' else '—' }}</td>
-<td>{{ t.ema5 or '—' }}</td>
-<td>{{ t.ema25 or '—' }}</td>
 <td class="{% if t.ema_signal == 'haussier' %}vert{% elif t.ema_signal == 'baissier' %}rouge{% endif %}"><b>{{ t.ema_signal or '—' }}</b>
 {% if tf == 'M5' and t.ema_depuis is not none %}
 {% set dep = t.ema_depuis %}
@@ -239,7 +236,7 @@ Formule : (somme des votes × poids) / somme des poids × 100
 {% else %}<span class="timing-mini rouge">❌ {{ dep }} bg</span>{% endif %}
 {% endif %}
 </td>
-<td>{% if t.cassure.sens == 'haussiere' %}<span class="vert">↑</span>{% elif t.cassure.sens == 'baissiere' %}<span class="rouge">↓</span>{% else %}—{% endif %}{% if t.cassure.il_y_a is not none %} <span class="pct">{{ 'now' if t.cassure.il_y_a == 0 else t.cassure.il_y_a ~ ' bg' }}</span>{% endif %}</td>
+<td>{% if t.cassure.sens == 'haussiere' %}<span class="vert">↑</span>{% elif t.cassure.sens == 'baissiere' %}<span class="rouge">↓</span>{% else %}—{% endif %}</td>
 <td>{% for m in t.motifs %}<span class="tag {{ m.cls }}">{{ m.txt }}</span> {% else %}—{% endfor %}</td>
 </tr>
 {% endif %}
@@ -265,21 +262,17 @@ Formule : (somme des votes × poids) / somme des poids × 100
 {% endfor %}
 
 <details class="aide">
-<summary>ℹ️ Comment lire le bot — Calcul de la tendance générale</summary>
+<summary>ℹ️ Comment lire le bot — RSI et tendance générale</summary>
 <ul>
-<li><b>🧮 Tendance générale = VOTE pondéré des TF.</b> Chaque TF vote : +1 (haussier), −1 (baissier), 0 (neutre).</li>
-<li><b>Poids des TF</b> : M5×5, M15×4, M30×3, H1×2, H4×1. Les petits TF pèsent plus lourd car ils reflètent le mouvement récent.</li>
-<li><b>Formule</b> : score = (somme des votes × poids) / (somme des poids) × 100</li>
-<li><b>Exemple concret</b> : si M15+M30+H1+H4 sont haussiers et M5 baissier → score = (+4+3+2+1 − 5) / 15 × 100 = <b>+33% → ACHAT</b>.</li>
-<li><b>Bonus de cohérence</b> : +10% si TOUS les TF sont haussiers, −10% si tous baissiers.</li>
-<li><b>Verdict</b> : score ≥ +60% → ACHAT FORT · ≥ +25% → ACHAT · ≤ −25% → VENTE · ≤ −60% → VENTE FORTE · sinon NEUTRE.</li>
-<li><b>% Acheteurs/Vendeurs pondéré</b> (affiché séparément) : c'est la moyenne pondérée des % de chaque TF. Information secondaire, ne décide PAS le verdict.</li>
-<li><b>Bougies analysées par TF</b> : M5=30, M15=25, M30=20, H1=15, H4=10. Les petits TF ont besoin de plus de bougies car ils bougent vite.</li>
-<li><b>🤖 Le bot te dit quoi faire</b> : "ENTRE MAINTENANT" (vert), "PRUDENCE — DEMI-LOT" (jaune), "N'ENTRE PAS" (rouge), "ATTENDRE" (gris).</li>
-<li><b>🔔 Son</b> : bip + vibration quand un signal change ou qu'un verdict change.</li>
-<li><b>🔊 Voix</b> : annonce vocale en français quand un événement important arrive.</li>
-<li>Toutes les bougies en cours sont ignorées : seules les clôturées comptent.</li>
-<li>Teste en démo 2-3 semaines minimum.</li>
+<li><b>📊 RSI</b> : le RSI (Relative Strength Index) est l'indicateur standard pour mesurer la force acheteuse/vendeuse. C'est celui de TradingView, MT5, et toutes les plateformes sérieuses. <b>RSI 70 = 70% de force acheteuse. RSI 30 = 70% de force vendeuse.</b></li>
+<li><b>Période RSI</b> : 14 = standard (comparable à TradingView). 7 sur M5 car le marché bouge vite.</li>
+<li><b>Interprétation</b> : RSI 50 = équilibré · RSI 60-70 = force haussière · RSI 70+ = suracheté (risque de retournement) · RSI 30-40 = force baissière · RSI < 30 = survendu (rebond possible).</li>
+<li><b>🧮 Tendance générale</b> = vote pondéré des TF : +1 (haussier), −1 (baissier), 0 (neutre), × poids du TF (M5×5, M15×4, M30×3, H1×2, H4×1).</li>
+<li><b>Exemple</b> : 4 TF haussiers + 1 baissier = (+4+3+2+1 −5)/15 = +33% → ACHAT.</li>
+<li><b>Bonus cohérence</b> : +10% si TOUS les TF alignés, −10% sinon.</li>
+<li><b>🤖 Ce qui te fait ENTRER</b> : tendance générale ACHAT/VENTE + croisement EMA M5 frais + tous les filtres verts + le bot dit "ENTRE MAINTENANT".</li>
+<li><b>⚠️ RSI en excès</b> : si RSI M5 > 80 en ACHAT, le bot te prévient d'un risque de retournement.</li>
+<li><b>🔔 Son + 🔊 Voix</b> : alerte quand signal change ou verdict change.</li>
 </ul>
 </details>
 
@@ -325,9 +318,7 @@ function parler(txt) {
     window.speechSynthesis.cancel();
     var u = new SpeechSynthesisUtterance(txt);
     u.lang = 'fr-FR';
-    u.rate = 1.05;
-    u.pitch = 1.0;
-    u.volume = 1.0;
+    u.rate = 1.05; u.pitch = 1.0; u.volume = 1.0;
     window.speechSynthesis.speak(u);
   } catch (e) {}
 }

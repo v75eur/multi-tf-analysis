@@ -31,18 +31,16 @@ DERIV_WS = "wss://api.derivws.com/trading/v1/options/ws/public"
 CACHE_SEC = {"1h": 300, "30m": 180, "15m": 120, "5m": 60}
 _cache_yahoo = {}
 
-# ═══════════════════════════════════════════════════════
-# POIDS DES TIMEFRAMES
-# Les petits TF pèsent plus lourd car ils reflètent le mouvement récent
-# ═══════════════════════════════════════════════════════
+# Poids des timeframes pour la tendance générale
 POIDS_TF = {"M5": 5, "M15": 4, "M30": 3, "H1": 2, "H4": 1}
 ORDRE_TF = ["M5", "M15", "M30", "H1", "H4"]
 
-# ═══════════════════════════════════════════════════════
-# NOMBRE DE BOUGIES PAR TF
-# Les petits TF ont besoin de PLUS de bougies (le marché bouge vite)
-# ═══════════════════════════════════════════════════════
-PERIODE_ACHETEURS = {"M5": 30, "M15": 25, "M30": 20, "H1": 15, "H4": 10}
+# ═══════════ RSI : période adaptée par TF ═══════════
+# RSI 14 = standard (comparable à TradingView)
+# RSI 7 sur M5 car le marché bouge vite
+RSI_PERIODE = {"M5": 7, "M15": 14, "M30": 14, "H1": 14, "H4": 14}
+
+# Nombre de bougies analysées pour la tendance par régression
 PERIODE_TENDANCE = {"M5": 30, "M15": 25, "M30": 20, "H1": 15, "H4": 10}
 
 CORRELATIONS = {"EURUSD": ["GBPUSD"], "GBPUSD": ["EURUSD"], "XAUUSD": [], "V75": []}
@@ -167,8 +165,7 @@ def calc_ema_signal(clotures):
 
 
 def calc_tendance(clotures):
-    """Tendance par régression linéaire.
-    Retourne : (sens, pente_pct)"""
+    """Tendance par régression linéaire sur les N dernières clôtures."""
     if len(clotures) < 3:
         return "neutre", 0.0
     x = np.arange(1, len(clotures) + 1)
@@ -187,47 +184,46 @@ def calc_tendance(clotures):
     return "neutre", pct
 
 
-def calc_acheteurs(bougies, periode=15):
-    """% acheteurs/vendeurs simple et honnête :
-    compte les bougies vertes vs rouges sur la période.
-    La position de clôture est utilisée pour pondérer légèrement."""
-    d = bougies[-periode:]
-    if len(d) < 3:
-        return 50.0, 50.0
-    ach = 0.0
-    ven = 0.0
-    for b in d:
-        rng = b["high"] - b["low"]
-        if rng <= 0:
-            ach += 0.5
-            ven += 0.5
-            continue
-        # Base : verte ou rouge
-        if b["close"] > b["open"]:
-            # Bougie verte : compte comme acheteuse, nuancée par la mèche haute
-            corps = b["close"] - b["open"]
-            meche_basse = b["open"] - b["low"]
-            meche_haute = b["high"] - b["close"]
-            poids_vert = 0.6 + 0.4 * (corps + meche_basse) / rng
-            ach += poids_vert
-            ven += (1 - poids_vert)
-        elif b["close"] < b["open"]:
-            # Bougie rouge : compte comme vendeuse, nuancée par la mèche basse
-            corps = b["open"] - b["close"]
-            meche_basse = b["close"] - b["low"]
-            meche_haute = b["high"] - b["open"]
-            poids_rouge = 0.6 + 0.4 * (corps + meche_haute) / rng
-            ven += poids_rouge
-            ach += (1 - poids_rouge)
+# ═══════════════════════════════════════════════════════
+# RSI — Relative Strength Index
+# Indicateur reconnu, comparable à TradingView
+# RSI 70 = 70% force acheteuse · RSI 30 = 70% force vendeuse
+# ═══════════════════════════════════════════════════════
+def calc_rsi(bougies, periode=14):
+    """RSI classique de Wilder. Utilise uniquement les clôtures."""
+    if len(bougies) < periode + 1:
+        return 50.0
+    clotures = [b["close"] for b in bougies]
+    gains = []
+    pertes = []
+    for i in range(1, len(clotures)):
+        diff = clotures[i] - clotures[i - 1]
+        if diff > 0:
+            gains.append(diff)
+            pertes.append(0.0)
+        elif diff < 0:
+            gains.append(0.0)
+            pertes.append(abs(diff))
         else:
-            ach += 0.5
-            ven += 0.5
-    total = ach + ven
-    if total <= 0:
-        return 50.0, 50.0
-    pa = round(ach / total * 100, 1)
-    pv = round(100 - pa, 1)
-    return pa, pv
+            gains.append(0.0)
+            pertes.append(0.0)
+
+    # Première moyenne (simple) sur les `periode` premières variations
+    if len(gains) < periode:
+        return 50.0
+    gain_moy = float(np.mean(gains[:periode]))
+    perte_moy = float(np.mean(pertes[:periode]))
+
+    # Lissage de Wilder pour le reste
+    for i in range(periode, len(gains)):
+        gain_moy = (gain_moy * (periode - 1) + gains[i]) / periode
+        perte_moy = (perte_moy * (periode - 1) + pertes[i]) / periode
+
+    if perte_moy == 0:
+        return 100.0
+    rs = gain_moy / perte_moy
+    rsi = 100 - (100 / (1 + rs))
+    return round(rsi, 1)
 
 
 def calc_agitation(bougies, periode=10):
@@ -265,16 +261,16 @@ def calc_divergence(bougies, creux, sommets):
     if len(creux) >= 2:
         c1, c2 = creux[-2], creux[-1]
         if bougies[c2]["low"] < bougies[c1]["low"]:
-            r1 = calc_acheteurs(bougies[:c1 + 1], min(10, c1 + 1))[0]
-            r2 = calc_acheteurs(bougies[:c2 + 1], min(10, c2 + 1))[0]
+            r1 = calc_rsi(bougies[:c1 + 1], 14)
+            r2 = calc_rsi(bougies[:c2 + 1], 14)
             if r2 > r1:
                 div_h = True
     div_b = False
     if len(sommets) >= 2:
         s1, s2 = sommets[-2], sommets[-1]
         if bougies[s2]["high"] > bougies[s1]["high"]:
-            r1 = calc_acheteurs(bougies[:s1 + 1], min(10, s1 + 1))[0]
-            r2 = calc_acheteurs(bougies[:s2 + 1], min(10, s2 + 1))[0]
+            r1 = calc_rsi(bougies[:s1 + 1], 14)
+            r2 = calc_rsi(bougies[:s2 + 1], 14)
             if r2 < r1:
                 div_b = True
     if div_h:
@@ -339,22 +335,27 @@ def analyser(tf, bougies):
         return None
     clotures = [b["close"] for b in bougies]
 
-    per_ach = PERIODE_ACHETEURS.get(tf, 15)
     per_tend = PERIODE_TENDANCE.get(tf, 15)
+    per_rsi = RSI_PERIODE.get(tf, 14)
 
     tendance, pct_tendance = calc_tendance(clotures[-per_tend:])
-    pa, pv = calc_acheteurs(bougies, per_ach)
+    rsi = calc_rsi(bougies, per_rsi)
     ag = calc_agitation(bougies)
     creux = trouver_creux(bougies)
     sommets = trouver_sommets(bougies)
     divergence = calc_divergence(bougies, creux, sommets)
     ema5, ema25, ema_sig, ema_depuis = calc_ema_signal(clotures)
     motifs, grande, taille_x, mh, mb = calc_motifs(bougies)
+
+    # RSI → % acheteurs/vendeurs
+    pa = round(rsi, 1)
+    pv = round(100 - rsi, 1)
+
     return {
         "tf": tf, "tendance": tendance, "pct_tendance": pct_tendance,
         "pct_acheteurs": pa, "pct_vendeurs": pv,
+        "rsi": rsi, "rsi_periode": per_rsi,
         "pct_agitation": ag,
-        "periode_ach": per_ach,
         "periode_tend": per_tend,
         "divergence": divergence,
         "ema5": ema5, "ema25": ema25, "ema_signal": ema_sig, "ema_depuis": ema_depuis,
@@ -383,30 +384,23 @@ def calc_timing_entree(m5):
 
 
 # ═══════════════════════════════════════════════════════
-# TENDANCE GÉNÉRALE CORRIGÉE
-# Vote des TF pondéré par les poids. Si 4 TF sur 5 sont haussiers,
-# le verdict est ACHAT, point.
+# TENDANCE GÉNÉRALE = VOTE PONDÉRÉ DES TF
+# Chaque TF vote +1 (haussier), -1 (baissier), 0 (neutre).
+# Pondéré par POIDS_TF (M5×5, M15×4, M30×3, H1×2, H4×1).
 # ═══════════════════════════════════════════════════════
 def calc_tendance_generale(tfs):
-    """Tendance générale = VOTE des TF pondéré par leur poids.
-    Chaque TF vote : +1 (haussier), -1 (baissier), 0 (neutre).
-    On pondère ensuite par POIDS_TF (M5×5, M15×4, M30×3, H1×2, H4×1).
-    Bonus de cohérence si tous les TF sont alignés."""
     if not tfs:
         return None
 
     poids_total = 0
     score = 0.0
-    somme_ach = 0.0
-    somme_ven = 0.0
+    somme_rsi = 0.0
 
     for tf, data in tfs.items():
         p = POIDS_TF.get(tf, 1)
         poids_total += p
-        somme_ach += data["pct_acheteurs"] * p
-        somme_ven += data["pct_vendeurs"] * p
+        somme_rsi += data["rsi"] * p
 
-        # Vote simple : haussier = +1, baissier = -1, neutre = 0
         if data["tendance"] == "haussier":
             vote = 1.0
         elif data["tendance"] == "baissier":
@@ -419,11 +413,12 @@ def calc_tendance_generale(tfs):
     if poids_total == 0:
         return None
 
-    ach_gen = round(somme_ach / poids_total, 1)
-    ven_gen = round(somme_ven / poids_total, 1)
+    rsi_gen = round(somme_rsi / poids_total, 1)
+    pa_gen = rsi_gen
+    pv_gen = round(100 - rsi_gen, 1)
     score_pct_brut = score / poids_total * 100
 
-    # Bonus de cohérence : si TOUS les TF alignés
+    # Bonus de cohérence
     sens_list = [t["tendance"] for t in tfs.values()]
     nb_haut = sum(1 for s in sens_list if s == "haussier")
     nb_bas = sum(1 for s in sens_list if s == "baissier")
@@ -436,7 +431,6 @@ def calc_tendance_generale(tfs):
 
     score_pct = round(score_pct_brut + bonus, 1)
 
-    # Verdict basé sur le score
     if score_pct >= 60:
         tendance, couleur = "ACHAT FORT", "vert"
     elif score_pct >= 25:
@@ -448,7 +442,7 @@ def calc_tendance_generale(tfs):
     else:
         tendance, couleur = "NEUTRE", ""
 
-    # Alignement progressif du plus petit au plus grand
+    # Alignement progressif
     alignement = {"haussier": 0, "baissier": 0, "detail": []}
     for sens in ("haussier", "baissier"):
         compte = 0
@@ -471,7 +465,7 @@ def calc_tendance_generale(tfs):
     else:
         align_sens, align_n = None, 0
 
-    # Confirmation croisement EMA M5
+    # Confirmation M5
     confirmation = None
     trois = ["M15", "M30", "H1"]
     if all(tf in tfs for tf in trois) and "M5" in tfs:
@@ -485,15 +479,16 @@ def calc_tendance_generale(tfs):
                 confirmation = {"sens": "VENTE", "couleur": "rouge",
                                 "txt": "M15+M30+H1 baissiers + croisement EMA M5 baissier récent."}
 
-    # Détail des votes (pour transparence)
+    # Détail des votes pour transparence
     votes_detail = []
     for tf in ORDRE_TF:
         if tf in tfs:
             p = POIDS_TF.get(tf, 1)
             v = 1 if tfs[tf]["tendance"] == "haussier" else (-1 if tfs[tf]["tendance"] == "baissier" else 0)
-            votes_detail.append({"tf": tf, "vote": v, "poids": p, "contribution": v * p})
+            votes_detail.append({"tf": tf, "vote": v, "poids": p, "contribution": v * p,
+                                 "rsi": tfs[tf]["rsi"]})
 
-    return {"ach_gen": ach_gen, "ven_gen": ven_gen,
+    return {"rsi_gen": rsi_gen, "ach_gen": pa_gen, "ven_gen": pv_gen,
             "score_pct": score_pct, "score_brut": round(score_pct_brut, 1),
             "bonus": bonus,
             "tendance": tendance, "couleur": couleur,
@@ -530,7 +525,7 @@ def generer_conseil(pair, d, session_act, autres_cond, historique):
 
     if not tfs or not gen:
         return {"verdict": "PAS DE DONNÉES", "couleur": "gris", "action": "ATTENDRE",
-                "message": f"Je n'ai pas assez de données sur {pair} pour te conseiller. Attends le prochain cycle.",
+                "message": f"Je n'ai pas assez de données sur {pair} pour te conseiller.",
                 "raisons": ["Données insuffisantes ou marché fermé."]}
 
     if sig not in ("ACHAT", "VENTE"):
@@ -569,6 +564,13 @@ def generer_conseil(pair, d, session_act, autres_cond, historique):
     if h1_data and h1_data.get("pct_agitation", 0) > SEUIL_AGITATION_MAX:
         raisons.append(f"Marché trop agité (agitation H1 {h1_data['pct_agitation']}%).")
 
+    # Vérification RSI (excès)
+    rsi_m5 = tfs["M5"]["rsi"]
+    if achat and rsi_m5 > 80:
+        raisons.append(f"RSI M5 en excès haussier ({rsi_m5}) : risque de retournement imminent.")
+    if not achat and rsi_m5 < 20:
+        raisons.append(f"RSI M5 en excès baissier ({rsi_m5}) : risque de rebond imminent.")
+
     cote = sltp["achat" if achat else "vente"] if sltp else None
     if cote is None:
         raisons.append("Pas d'objectif clair devant le prix.")
@@ -602,12 +604,12 @@ def generer_conseil(pair, d, session_act, autres_cond, historique):
     if bt and bt["n"] >= 10 and bt["pct"] is not None and bt["pct"] < 45:
         raisons.append(f"Sur le passé, ce signal n'a réussi que {bt['pct']}% du temps.")
 
-    bloquants = [r for r in raisons if "pullback" in r or "trop avancé" in r or "pas d'objectif" in r.lower() or "doubler ton risque" in r or "peu fiables" in r]
+    bloquants = [r for r in raisons if "pullback" in r or "trop avancé" in r or "pas d'objectif" in r.lower() or "doubler ton risque" in r or "peu fiables" in r or "excès" in r]
     avertissements = [r for r in raisons if r not in bloquants]
 
     if timing and timing["niveau"] == "TARDIF":
         return {"verdict": "N'ENTRE PAS", "couleur": "rouge", "action": "ATTENDRE LE PROCHAIN CROISEMENT",
-                "message": f"Le signal {sig} sur {pair} est trop tardif. Le croisement EMA M5 date de {tfs['M5']['ema_depuis']} bougies : le mouvement est déjà fait. Attends qu'un nouveau croisement se forme.",
+                "message": f"Le signal {sig} sur {pair} est trop tardif. Le croisement EMA M5 date de {tfs['M5']['ema_depuis']} bougies. Attends un nouveau croisement.",
                 "raisons": raisons}
 
     if bloquants:
@@ -617,12 +619,13 @@ def generer_conseil(pair, d, session_act, autres_cond, historique):
 
     if avertissements:
         return {"verdict": "PRUDENCE — DEMI-LOT", "couleur": "jaune", "action": "RÉDUIRE LE LOT DE MOITIÉ",
-                "message": f"Signal {sig} sur {pair}, mais il y a des points de vigilance. Si tu prends ce trade, réduis ton lot de moitié.",
+                "message": f"Signal {sig} sur {pair}, mais il y a des points de vigilance. Réduis ton lot de moitié.",
                 "raisons": raisons}
 
     lot_msg = "lot plein" if not timing or timing["niveau"] == "FRAIS" else "demi-lot"
+    rsi_mention = f" RSI M5 : {rsi_m5}." if rsi_m5 else ""
     return {"verdict": "ENTRE MAINTENANT", "couleur": "vert", "action": f"ACHAT/VENTE AU MARCHÉ — {lot_msg.upper()}",
-            "message": f"Setup propre sur {pair}. Signal {sig}, timing {timing['niveau'] if timing else 'OK'}, tout est aligné. Entre à la clôture M5 avec le {lot_msg}.",
+            "message": f"Setup propre sur {pair}. Signal {sig}, timing {timing['niveau'] if timing else 'OK'}.{rsi_mention} Entre à la clôture M5 avec le {lot_msg}.",
             "raisons": raisons or ["Tous les filtres au vert."]}
 
 
@@ -668,23 +671,12 @@ def calc_stats(pair, h1, tfs):
         else:
             break
 
-    h = sum(1 for t in tfs.values() if t["tendance"] == "haussier")
-    b_ = sum(1 for t in tfs.values() if t["tendance"] == "baissier")
-    tot = len(tfs)
-    if h > b_:
-        align_txt, align_cls = f"{h}/{tot} haussiers", "vert"
-    elif b_ > h:
-        align_txt, align_cls = f"{b_}/{tot} baissiers", "rouge"
-    else:
-        align_txt, align_cls = f"Partagé {h}-{b_}", ""
-
     return {"var24": var(24), "var5j": var(120),
             "bas24": fp(pair, bas24), "haut24": fp(pair, haut24),
             "bas5j": fp(pair, bas5), "haut5j": fp(pair, haut5),
             "position": pos, "vol24": vol24, "vol_etat": vol_etat,
             "vertes": vertes, "serie_n": n_serie,
-            "serie_sens": "hausse" if sens == 1 else "baisse" if sens == -1 else "—",
-            "align_txt": align_txt, "align_cls": align_cls}
+            "serie_sens": "hausse" if sens == 1 else "baisse" if sens == -1 else "—"}
 
 
 def calc_niveaux(pair, prix, m15, h1):
@@ -740,27 +732,6 @@ def calc_sltp(pair, prix, m15):
             "vente": cote_sltp(pair, prix, stop_v, obj_v, "vente")}
 
 
-def calc_heures(h1):
-    par = {}
-    for b in h1:
-        hh = datetime.fromtimestamp(b["t"], BENIN).hour
-        par.setdefault(hh, []).append((b["high"] - b["low"]) / b["close"] * 100)
-    moy = {h: float(np.mean(v)) for h, v in par.items() if len(v) >= 3}
-    if len(moy) < 8:
-        return None
-    glob = float(np.mean(list(moy.values())))
-    top = sorted(moy, key=moy.get, reverse=True)[:3]
-    plate = max(moy.values()) / min(moy.values()) < 1.25
-    maintenant = datetime.now(BENIN).hour
-    if maintenant in moy and glob > 0:
-        rel = moy[maintenant] / glob
-        etat = "forte" if rel >= 1.2 else "faible" if rel <= 0.8 else "normale"
-    else:
-        rel, etat = 0.0, "inconnue"
-    return {"top": [f"{h:02d}h–{(h + 1) % 24:02d}h" for h in top],
-            "plate": plate, "now_etat": etat, "now_ratio": round(rel, 2)}
-
-
 def tendance_simple(cl):
     x = np.arange(len(cl))
     p = np.polyfit(x, np.array(cl), 1)[0]
@@ -791,11 +762,11 @@ def backtest(series, pair="", horizon=12, test=500, max_trade=48):
                 break
             per_tend = PERIODE_TENDANCE.get(tf, 15)
             tend = tendance_simple([b["close"] for b in sl[-per_tend:]])
-            per_ach = PERIODE_ACHETEURS.get(tf, 15)
-            pa, pv = calc_acheteurs(sl, per_ach)
-            if tend > 0 and pa > pv:
+            per_rsi = RSI_PERIODE.get(tf, 14)
+            rsi = calc_rsi(sl, per_rsi)
+            if tend > 0 and rsi > 50:
                 etats.add(1)
-            elif tend < 0 and pv > pa:
+            elif tend < 0 and rsi < 50:
                 etats.add(-1)
             else:
                 etats.add(0)
@@ -906,14 +877,17 @@ def conditions_paire(tfs, ferme=False, generale=None):
 
     def verifier(sens):
         if sens == "haussier":
-            fl, a, b, lab = "↑", "pct_acheteurs", "pct_vendeurs", "Ach>Ven"
+            fl, a, b, lab = "↑", "rsi", "rsi_bas", "RSI>50"
         else:
-            fl, a, b, lab = "↓", "pct_vendeurs", "pct_acheteurs", "Ven>Ach"
+            fl, a, b, lab = "↓", "rsi_bas", "rsi", "RSI<50"
         d = {}
         for nom, t in trois:
             d[f"{nom} {fl}"] = t["tendance"] == sens
         for nom, t in trois:
-            d[f"{lab} {nom}"] = t[a] > t[b]
+            if sens == "haussier":
+                d[f"{lab} {nom}"] = t["rsi"] > 50
+            else:
+                d[f"{lab} {nom}"] = t["rsi"] < 50
         d[f"M5 EMA{fl}"] = m5["ema_signal"] == sens
         bonus = bool(h4 and h4["tendance"] == sens)
         return d, bonus, fl
@@ -962,6 +936,10 @@ def alertes_signal(cond, tfs, niv, sltp, bt, mm_h1):
         al.append({"txt": f"Support proche ({niv['sup']}).", "cls": "jaune"})
     if m5["grande"]:
         al.append({"txt": f"Grosse bougie M5 (×{m5['taille_x']}).", "cls": "jaune"})
+    if m5["rsi"] > 80:
+        al.append({"txt": f"RSI M5 suracheté ({m5['rsi']}).", "cls": "jaune"})
+    if m5["rsi"] < 20:
+        al.append({"txt": f"RSI M5 survendu ({m5['rsi']}).", "cls": "jaune"})
     if sltp:
         cote = sltp["achat" if achat else "vente"]
         if cote is None:
@@ -996,7 +974,8 @@ def construire_guide(pair, cond, tfs, sltp):
             lot_txt = "N'ENTRE PAS : mouvement trop avancé."
     g = {"sens": sig, "feu": feu, "heure": datetime.fromtimestamp(nxt, BENIN).strftime("%H:%M"),
          "prix": fp(pair, prix), "contrat": CONTRAT.get(pair), "stop": None,
-         "timing": timing, "lot_niveau": lot_niveau, "lot_txt": lot_txt}
+         "timing": timing, "lot_niveau": lot_niveau, "lot_txt": lot_txt,
+         "rsi_m5": tfs["M5"]["rsi"]}
     if cote:
         g.update({"stop": cote["stop"], "objectif": cote["objectif"], "ratio": cote["ratio"],
                   "dist": f"{abs(prix - cote['stop_brut']):.8f}",
@@ -1052,7 +1031,6 @@ def analyser_paire(pair, source, historique=None, autres_cond=None):
         p = resultats["M5"]["prix"]
         niv = calc_niveaux(pair, p, m15, h1)
         sltp = calc_sltp(pair, p, m15)
-        heures = calc_heures(h1)
         bt = backtest(series, pair)
         cond["alertes"] = alertes_signal(cond, resultats, niv, sltp, bt, mouvement_moyen(h1, 24))
         guide = construire_guide(pair, cond, resultats, sltp)
