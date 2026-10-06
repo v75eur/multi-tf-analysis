@@ -31,12 +31,17 @@ DERIV_WS = "wss://api.derivws.com/trading/v1/options/ws/public"
 CACHE_SEC = {"1h": 300, "30m": 180, "15m": 120, "5m": 60}
 _cache_yahoo = {}
 
+# ═══════════════════════════════════════════════════════
+# POIDS DES TIMEFRAMES
+# Les petits TF pèsent plus lourd car ils reflètent le mouvement récent
+# ═══════════════════════════════════════════════════════
 POIDS_TF = {"M5": 5, "M15": 4, "M30": 3, "H1": 2, "H4": 1}
 ORDRE_TF = ["M5", "M15", "M30", "H1", "H4"]
 
-# ═══════════ NOMBRE DE BOUGIES PAR TF ═══════════
-# Les petits TF ont besoin de PLUS de bougies pour être fiables
-# (le marché bouge vite sur M5, 10 bougies = 50 min seulement)
+# ═══════════════════════════════════════════════════════
+# NOMBRE DE BOUGIES PAR TF
+# Les petits TF ont besoin de PLUS de bougies (le marché bouge vite)
+# ═══════════════════════════════════════════════════════
 PERIODE_ACHETEURS = {"M5": 30, "M15": 25, "M30": 20, "H1": 15, "H4": 10}
 PERIODE_TENDANCE = {"M5": 30, "M15": 25, "M30": 20, "H1": 15, "H4": 10}
 
@@ -47,7 +52,7 @@ DUREE_SIGNAL_MIN = 30
 JOURNAL_MAX = 200
 TIMING_FRAIS_MAX = 5
 TIMING_MOYEN_MAX = 12
-HTTP_TIMEOUT = 6   # timeout court pour éviter les 502
+HTTP_TIMEOUT = 6
 
 
 def logged():
@@ -162,19 +167,30 @@ def calc_ema_signal(clotures):
 
 
 def calc_tendance(clotures):
+    """Tendance par régression linéaire.
+    Retourne : (sens, pente_pct)"""
+    if len(clotures) < 3:
+        return "neutre", 0.0
     x = np.arange(1, len(clotures) + 1)
-    pente = np.polyfit(x, np.array(clotures), 1)[0]
-    pct = float(min(100, abs(pente) / np.mean(clotures) * 10000))
-    if pente > 0:
-        return "haussier", round(pct, 1)
-    if pente < 0:
-        return "baissier", round(pct, 1)
-    return "neutre", 0.0
+    try:
+        pente = np.polyfit(x, np.array(clotures), 1)[0]
+    except Exception:
+        return "neutre", 0.0
+    prix_moy = float(np.mean(clotures))
+    if prix_moy <= 0:
+        return "neutre", 0.0
+    pct = round(pente / prix_moy * 10000, 2)
+    if pct > 0.02:
+        return "haussier", pct
+    if pct < -0.02:
+        return "baissier", pct
+    return "neutre", pct
 
 
-def calc_acheteurs(bougies, periode=10):
-    """% acheteurs/vendeurs basé sur les bougies vertes/rouges.
-    Prend en compte la position de clôture pour les mèches."""
+def calc_acheteurs(bougies, periode=15):
+    """% acheteurs/vendeurs simple et honnête :
+    compte les bougies vertes vs rouges sur la période.
+    La position de clôture est utilisée pour pondérer légèrement."""
     d = bougies[-periode:]
     if len(d) < 3:
         return 50.0, 50.0
@@ -186,10 +202,26 @@ def calc_acheteurs(bougies, periode=10):
             ach += 0.5
             ven += 0.5
             continue
-        # Position de clôture dans le range (0 = plus bas, 1 = plus haut)
-        pos = (b["close"] - b["low"]) / rng
-        ach += pos
-        ven += (1 - pos)
+        # Base : verte ou rouge
+        if b["close"] > b["open"]:
+            # Bougie verte : compte comme acheteuse, nuancée par la mèche haute
+            corps = b["close"] - b["open"]
+            meche_basse = b["open"] - b["low"]
+            meche_haute = b["high"] - b["close"]
+            poids_vert = 0.6 + 0.4 * (corps + meche_basse) / rng
+            ach += poids_vert
+            ven += (1 - poids_vert)
+        elif b["close"] < b["open"]:
+            # Bougie rouge : compte comme vendeuse, nuancée par la mèche basse
+            corps = b["open"] - b["close"]
+            meche_basse = b["close"] - b["low"]
+            meche_haute = b["high"] - b["open"]
+            poids_rouge = 0.6 + 0.4 * (corps + meche_haute) / rng
+            ven += poids_rouge
+            ach += (1 - poids_rouge)
+        else:
+            ach += 0.5
+            ven += 0.5
     total = ach + ven
     if total <= 0:
         return 50.0, 50.0
@@ -307,7 +339,6 @@ def analyser(tf, bougies):
         return None
     clotures = [b["close"] for b in bougies]
 
-    # Périodes adaptées au TF (petits TF = plus de bougies)
     per_ach = PERIODE_ACHETEURS.get(tf, 15)
     per_tend = PERIODE_TENDANCE.get(tf, 15)
 
@@ -351,17 +382,23 @@ def calc_timing_entree(m5):
             "lot_conseil": "ATTENDRE", "lot_ratio": 0.0}
 
 
+# ═══════════════════════════════════════════════════════
+# TENDANCE GÉNÉRALE CORRIGÉE
+# Vote des TF pondéré par les poids. Si 4 TF sur 5 sont haussiers,
+# le verdict est ACHAT, point.
+# ═══════════════════════════════════════════════════════
 def calc_tendance_generale(tfs):
-    """Tendance générale pondérée par TF.
-    Les petits TF (M5×5, M15×4) pèsent plus lourd que les grands."""
+    """Tendance générale = VOTE des TF pondéré par leur poids.
+    Chaque TF vote : +1 (haussier), -1 (baissier), 0 (neutre).
+    On pondère ensuite par POIDS_TF (M5×5, M15×4, M30×3, H1×2, H4×1).
+    Bonus de cohérence si tous les TF sont alignés."""
     if not tfs:
         return None
 
     poids_total = 0
+    score = 0.0
     somme_ach = 0.0
     somme_ven = 0.0
-    score = 0.0
-    score_max = 0.0
 
     for tf, data in tfs.items():
         p = POIDS_TF.get(tf, 1)
@@ -369,20 +406,37 @@ def calc_tendance_generale(tfs):
         somme_ach += data["pct_acheteurs"] * p
         somme_ven += data["pct_vendeurs"] * p
 
-        # Vote pondéré par intensité : écart ach/ven entre -1 et +1
-        ecart = (data["pct_acheteurs"] - data["pct_vendeurs"]) / 100
-        # Amplifié par la pente (force de la tendance)
-        intensite = min(1.0, abs(data["pct_tendance"]) / 50 + 0.5)
-        score += ecart * p * intensite
-        score_max += p
+        # Vote simple : haussier = +1, baissier = -1, neutre = 0
+        if data["tendance"] == "haussier":
+            vote = 1.0
+        elif data["tendance"] == "baissier":
+            vote = -1.0
+        else:
+            vote = 0.0
+
+        score += vote * p
 
     if poids_total == 0:
         return None
 
     ach_gen = round(somme_ach / poids_total, 1)
     ven_gen = round(somme_ven / poids_total, 1)
-    score_pct = round(score / score_max * 100, 1) if score_max else 0.0
+    score_pct_brut = score / poids_total * 100
 
+    # Bonus de cohérence : si TOUS les TF alignés
+    sens_list = [t["tendance"] for t in tfs.values()]
+    nb_haut = sum(1 for s in sens_list if s == "haussier")
+    nb_bas = sum(1 for s in sens_list if s == "baissier")
+    total_tf = len(sens_list)
+    bonus = 0.0
+    if nb_haut == total_tf:
+        bonus = 10.0
+    elif nb_bas == total_tf:
+        bonus = -10.0
+
+    score_pct = round(score_pct_brut + bonus, 1)
+
+    # Verdict basé sur le score
     if score_pct >= 60:
         tendance, couleur = "ACHAT FORT", "vert"
     elif score_pct >= 25:
@@ -394,7 +448,7 @@ def calc_tendance_generale(tfs):
     else:
         tendance, couleur = "NEUTRE", ""
 
-    # Alignement progressif
+    # Alignement progressif du plus petit au plus grand
     alignement = {"haussier": 0, "baissier": 0, "detail": []}
     for sens in ("haussier", "baissier"):
         compte = 0
@@ -417,7 +471,7 @@ def calc_tendance_generale(tfs):
     else:
         align_sens, align_n = None, 0
 
-    # Confirmation M5 après clôture
+    # Confirmation croisement EMA M5
     confirmation = None
     trois = ["M15", "M30", "H1"]
     if all(tf in tfs for tf in trois) and "M5" in tfs:
@@ -431,10 +485,22 @@ def calc_tendance_generale(tfs):
                 confirmation = {"sens": "VENTE", "couleur": "rouge",
                                 "txt": "M15+M30+H1 baissiers + croisement EMA M5 baissier récent."}
 
+    # Détail des votes (pour transparence)
+    votes_detail = []
+    for tf in ORDRE_TF:
+        if tf in tfs:
+            p = POIDS_TF.get(tf, 1)
+            v = 1 if tfs[tf]["tendance"] == "haussier" else (-1 if tfs[tf]["tendance"] == "baissier" else 0)
+            votes_detail.append({"tf": tf, "vote": v, "poids": p, "contribution": v * p})
+
     return {"ach_gen": ach_gen, "ven_gen": ven_gen,
-            "score_pct": score_pct, "tendance": tendance, "couleur": couleur,
+            "score_pct": score_pct, "score_brut": round(score_pct_brut, 1),
+            "bonus": bonus,
+            "tendance": tendance, "couleur": couleur,
             "align_sens": align_sens, "align_n": align_n,
-            "align_detail": alignement["detail"], "confirmation": confirmation}
+            "align_detail": alignement["detail"],
+            "confirmation": confirmation,
+            "votes_detail": votes_detail}
 
 
 def session_actuelle():
@@ -944,7 +1010,6 @@ def construire_guide(pair, cond, tfs, sltp):
 # ───────────── ANALYSE PARALLÉLISÉE ─────────────
 
 def charger_tf_pour_paire(pair, source, tf, interval, range_, gran):
-    """Charge les bougies d'UN TF pour UNE paire. Appelé en parallèle."""
     try:
         if source == "yahoo":
             brut = recuperer_bougies_yahoo(YAHOO_PAIRS[pair], interval, range_)
@@ -959,9 +1024,7 @@ def charger_tf_pour_paire(pair, source, tf, interval, range_, gran):
 
 
 def analyser_paire(pair, source, historique=None, autres_cond=None):
-    """Analyse une paire avec TOUS les TF chargés EN PARALLÈLE."""
     series = {}
-    # Lancer tous les TF en même temps
     taches = [(tf, *TIMEFRAMES[tf]) for tf in TIMEFRAMES]
     with ThreadPoolExecutor(max_workers=5) as ex:
         futures = [ex.submit(charger_tf_pour_paire, pair, source, *t) for t in taches]
@@ -1008,7 +1071,6 @@ def analyser_securise(pair, source, historique=None, autres_cond=None):
 
 
 def analyser_tout():
-    """Charge TOUTES les paires EN PARALLÈLE."""
     taches = [(p, "yahoo") for p in YAHOO_PAIRS] + [(p, "deriv") for p in DERIV_PAIRS]
     res = {}
     with ThreadPoolExecutor(max_workers=4) as ex:

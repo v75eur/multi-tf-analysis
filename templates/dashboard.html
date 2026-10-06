@@ -110,25 +110,38 @@
 </div>
 {% endif %}
 
+{# ═════ TENDANCE GÉNÉRALE CORRIGÉE ═════ #}
 {% if gen %}
 <div class="general {{ gen.couleur }}">
 <div class="general-titre">
-🧮 Tendance générale pondérée
+🧮 Tendance générale (vote pondéré des TF)
 <span class="general-badge {{ gen.couleur }}">{{ gen.tendance }}</span>
 </div>
 
-<div class="general-jauge">
-<div class="general-barre">
-<i class="ach" style="width:{{ gen.ach_gen }}%"></i>
-</div>
-<div class="general-chiffres">
-<span class="vert">🟢 Acheteurs {{ gen.ach_gen }}%</span>
-<span class="rouge">🔴 Vendeurs {{ gen.ven_gen }}%</span>
-</div>
 <div class="general-score">
-Score pondéré : <b class="{{ gen.couleur }}">{{ '%+.1f'|format(gen.score_pct) }}%</b>
-<span class="pct">(M5×5 · M15×4 · M30×3 · H1×2 · H4×1 — les petits TF pèsent plus lourd)</span>
+Score : <b class="{{ gen.couleur }}">{{ '%+.1f'|format(gen.score_pct) }}%</b>
+{% if gen.bonus != 0 %}<span class="pct">(bonus cohérence {{ '%+.0f'|format(gen.bonus) }})</span>{% endif %}
 </div>
+
+<div class="votes-detail">
+<b>Vote de chaque TF :</b>
+<div class="votes-list">
+{% for v in gen.votes_detail %}
+<span class="vote-item {{ 'vert' if v.vote > 0 else 'rouge' if v.vote < 0 else 'neutre' }}">
+{{ v.tf }}
+{% if v.vote > 0 %}↑ +1{% elif v.vote < 0 %}↓ −1{% else %}→ 0{% endif %}
+× poids {{ v.poids }}
+</span>
+{% endfor %}
+</div>
+<div class="votes-formule">
+Formule : (somme des votes × poids) / somme des poids × 100
+</div>
+</div>
+
+<div class="general-chiffres" style="margin-top:.6rem;">
+<span class="vert">🟢 Acheteurs pondérés {{ gen.ach_gen }}%</span>
+<span class="rouge">🔴 Vendeurs pondérés {{ gen.ven_gen }}%</span>
 </div>
 
 <div class="general-align">
@@ -144,7 +157,7 @@ Score pondéré : <b class="{{ gen.couleur }}">{{ '%+.1f'|format(gen.score_pct) 
 </div>
 {% if gen.align_n >= 3 and gen.align_sens %}
 <div class="align-verdict {{ 'vert' if gen.align_sens == 'haussier' else 'rouge' }}">
-✅ {{ gen.align_n }} TF consécutifs alignés {{ 'haussier' if gen.align_sens == 'haussier' else 'baissier' }} ({{ gen.align_sens }}) — mouvement récent cohérent.
+✅ {{ gen.align_n }} TF consécutifs alignés {{ 'haussier' if gen.align_sens == 'haussier' else 'baissier' }} — mouvement récent cohérent.
 </div>
 {% elif gen.align_n > 0 and gen.align_sens %}
 <div class="align-verdict jaune">
@@ -202,7 +215,7 @@ Score pondéré : <b class="{{ gen.couleur }}">{{ '%+.1f'|format(gen.score_pct) 
 <h3>⏱️ Analyse par timeframe (périodes adaptées)</h3>
 <div class="scroll">
 <table>
-<thead><tr><th>TF</th><th>Poids</th><th>Bougies</th><th>Tendance</th><th>Ach/Ven</th><th>Agit</th><th>Div.</th><th>EMA5</th><th>EMA25</th><th>Signal EMA</th><th>Cassure</th><th>Bougie</th></tr></thead>
+<thead><tr><th>TF</th><th>Poids</th><th>Bougies</th><th>Tendance</th><th>Pente</th><th>Ach/Ven</th><th>Agit</th><th>Div.</th><th>EMA5</th><th>EMA25</th><th>Signal EMA</th><th>Cassure</th><th>Bougie</th></tr></thead>
 <tbody>
 {% for tf in ["H4", "H1", "M30", "M15", "M5"] %}
 {% if tf in tfs %}
@@ -211,7 +224,8 @@ Score pondéré : <b class="{{ gen.couleur }}">{{ '%+.1f'|format(gen.score_pct) 
 <td><b>{{ t.tf }}</b></td>
 <td><span class="poids">×{{ {'H4':1,'H1':2,'M30':3,'M15':4,'M5':5}[tf] }}</span></td>
 <td><span class="pct">{{ t.periode_ach }}b</span></td>
-<td>{{ t.tendance }} <span class="pct">{{ t.pct_tendance }}%</span></td>
+<td>{{ t.tendance }}</td>
+<td class="{{ 'vert' if t.pct_tendance > 0 else 'rouge' if t.pct_tendance < 0 else '' }}">{{ '%+.2f'|format(t.pct_tendance) }}</td>
 <td class="duelcell"><div class="duel"><i style="width:{{ t.pct_acheteurs }}%"></i></div><small><span class="vert">{{ t.pct_acheteurs }}</span> / <span class="rouge">{{ t.pct_vendeurs }}</span></small></td>
 <td>{{ t.pct_agitation }}%</td>
 <td>{{ 'H' if t.divergence == 'haussiere' else 'B' if t.divergence == 'baissiere' else '—' }}</td>
@@ -251,15 +265,19 @@ Score pondéré : <b class="{{ gen.couleur }}">{{ '%+.1f'|format(gen.score_pct) 
 {% endfor %}
 
 <details class="aide">
-<summary>ℹ️ Comment lire le bot</summary>
+<summary>ℹ️ Comment lire le bot — Calcul de la tendance générale</summary>
 <ul>
+<li><b>🧮 Tendance générale = VOTE pondéré des TF.</b> Chaque TF vote : +1 (haussier), −1 (baissier), 0 (neutre).</li>
+<li><b>Poids des TF</b> : M5×5, M15×4, M30×3, H1×2, H4×1. Les petits TF pèsent plus lourd car ils reflètent le mouvement récent.</li>
+<li><b>Formule</b> : score = (somme des votes × poids) / (somme des poids) × 100</li>
+<li><b>Exemple concret</b> : si M15+M30+H1+H4 sont haussiers et M5 baissier → score = (+4+3+2+1 − 5) / 15 × 100 = <b>+33% → ACHAT</b>.</li>
+<li><b>Bonus de cohérence</b> : +10% si TOUS les TF sont haussiers, −10% si tous baissiers.</li>
+<li><b>Verdict</b> : score ≥ +60% → ACHAT FORT · ≥ +25% → ACHAT · ≤ −25% → VENTE · ≤ −60% → VENTE FORTE · sinon NEUTRE.</li>
+<li><b>% Acheteurs/Vendeurs pondéré</b> (affiché séparément) : c'est la moyenne pondérée des % de chaque TF. Information secondaire, ne décide PAS le verdict.</li>
+<li><b>Bougies analysées par TF</b> : M5=30, M15=25, M30=20, H1=15, H4=10. Les petits TF ont besoin de plus de bougies car ils bougent vite.</li>
 <li><b>🤖 Le bot te dit quoi faire</b> : "ENTRE MAINTENANT" (vert), "PRUDENCE — DEMI-LOT" (jaune), "N'ENTRE PAS" (rouge), "ATTENDRE" (gris).</li>
-<li><b>📊 Bougies analysées par TF</b> : on augmente le nombre pour les petits TF car ils bougent vite. M5 = 30 bougies (2h30), M15 = 25 (6h), M30 = 20 (10h), H1 = 15 (15h), H4 = 10 (40h). Ça évite les faux signaux sur M5/M15.</li>
-<li><b>🧮 Tendance générale pondérée</b> : combine tous les TF. Les petits pèsent plus lourd (M5×5, M15×4, M30×3, H1×2, H4×1). Score entre -100% et +100%. +25% = ACHAT, +60% = ACHAT FORT.</li>
-<li><b>Alignement progressif</b> : on regarde M5 → M15 → M30 → H1. Si les 4 sont dans le même sens, le mouvement est cohérent.</li>
-<li><b>🔥 Timing d'entrée</b> : ≤5 bougies M5 depuis le croisement EMA = frais (lot plein), 6-12 = en cours (demi-lot), >12 = tardif (n'entre pas).</li>
-<li><b>🔔 Son</b> : bip + vibration quand un signal change ou qu'un verdict change. Le son "fort" (4 notes) est pour ENTRE MAINTENANT.</li>
-<li><b>🔊 Voix</b> : annonce vocale en français quand un événement important arrive. Active/désactive avec le bouton "Voix".</li>
+<li><b>🔔 Son</b> : bip + vibration quand un signal change ou qu'un verdict change.</li>
+<li><b>🔊 Voix</b> : annonce vocale en français quand un événement important arrive.</li>
 <li>Toutes les bougies en cours sont ignorées : seules les clôturées comptent.</li>
 <li>Teste en démo 2-3 semaines minimum.</li>
 </ul>
@@ -383,7 +401,6 @@ majBoutons();
 var precedent = lireSignaux();
 var precedentsVerdicts = lireVerdicts();
 
-// Annonce initiale si un signal est déjà présent
 if (voixOn) {
   var sigInit = Object.keys(precedent).filter(function (k) { return estSignal(precedent[k]); });
   if (sigInit.length) {
@@ -411,12 +428,10 @@ async function rafraichir() {
     var voixMsg = [];
 
     Object.keys(nouveaux).forEach(function (k) {
-      // Nouveau signal
       if (estSignal(nouveaux[k]) && precedent[k] !== nouveaux[k]) {
         alertes.push('🔔 ' + nouveaux[k] + ' ' + k);
         voixMsg.push(nouveaux[k] + ' sur ' + k);
       }
-      // Verdict changé
       var vOld = precedentsVerdicts[k];
       var vNew = nouveauxVerdicts[k];
       if (vNew && vOld && vOld !== vNew) {
