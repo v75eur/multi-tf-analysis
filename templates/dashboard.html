@@ -4,7 +4,6 @@
 <h1>🤖 Multi-TF Bot Guide</h1>
 <div>
 <span class="time">{{ now }}</span>
-<a href="/patterns" class="son">🔬 Patterns</a>
 <button id="son" class="son" type="button">🔕 Son</button>
 <span class="countdown">🔄 <span id="countdown">5min 0s</span></span>
 <a href="/logout" class="logout">🚪</a>
@@ -14,15 +13,10 @@
 <div class="compte">
 <label>💰 Capital ($)<input id="capital" type="number" min="0" step="any" inputmode="decimal" placeholder="ex : 100"></label>
 <label>🛡️ Risque max par trade (%)<input id="risque" type="number" min="0.1" max="5" step="0.1" value="1" inputmode="decimal"></label>
-<small>Le bot calcule ton lot.</small>
+<small>Le bot calcule ton lot automatiquement.</small>
 </div>
 
 <main>
-
-<div class="bandeau-patterns">
-🔬 <b>{{ total_obs }}</b> observations · <b>{{ total_sig }}</b> signatures.
-<a href="/patterns">Voir les patterns fiables →</a>
-</div>
 
 <div class="bandeau-session {{ 'vert' if session_act.qualite in ('forte','excellente') else 'jaune' }}">
 🕐 <b>Session :</b> {{ session_act.txt }}
@@ -33,7 +27,7 @@
 
 {% if journal %}
 <details class="journal" open>
-<summary>📒 Journal du bot ({{ journal|length }} entrées)</summary>
+<summary>📒 Journal du bot — ses conseils récents ({{ journal|length }} entrées)</summary>
 <div class="journal-feed">
 {% for j in journal|reverse %}
 <div class="journal-entry {{ j.couleur }}">
@@ -45,7 +39,11 @@
 </div>
 <div class="journal-action"><b>➡️ {{ j.action }}</b></div>
 <div class="journal-message">{{ j.message }}</div>
-{% if j.raisons %}<ul class="journal-raisons">{% for r in j.raisons %}<li>{{ r }}</li>{% endfor %}</ul>{% endif %}
+{% if j.raisons %}
+<ul class="journal-raisons">
+{% for r in j.raisons %}<li>{{ r }}</li>{% endfor %}
+</ul>
+{% endif %}
 </div>
 {% endfor %}
 </div>
@@ -56,31 +54,50 @@
 {% for pair, d in paires.items() %}
 {% set cb = d.conseil_bot %}
 <a href="#{{ pair }}" class="chip {{ cb.couleur if cb else d.cond.couleur }}">
-<b>{{ pair }}</b><span>{{ d.prix }}</span><em>{{ cb.verdict if cb else d.cond.signal }}</em>
+<b>{{ pair }}</b>
+<span>{{ d.prix }}</span>
+<em>{{ cb.verdict if cb else d.cond.signal }}</em>
 </a>
 {% endfor %}
 </div>
 
 {% for pair, d in paires.items() %}
-{% set c = d.cond %}{% set s = d.stats %}{% set tfs = d.tfs %}{% set gen = d.generale %}{% set cb = d.conseil_bot %}
+{% set c = d.cond %}
+{% set s = d.stats %}
+{% set tfs = d.tfs %}
+{% set gen = d.generale %}
+{% set cb = d.conseil_bot %}
 <section id="{{ pair }}" data-signal="{{ c.signal }}" class="paire {% if cb and cb.verdict == 'ENTRE MAINTENANT' %}signal-achat{% elif cb and cb.verdict == 'N\'ENTRE PAS' %}signal-vente{% endif %}">
 
 <div class="tete">
-<div><h2>💱 {{ pair }}</h2>
-<div class="prix">{{ d.prix }}{% if s %}<span class="var {{ 'vert' if s.var24 >= 0 else 'rouge' }}">{{ '%+.2f'|format(s.var24) }}%</span>{% endif %}</div>
-</div></div>
+<div>
+<h2>💱 {{ pair }}</h2>
+<div class="prix">{{ d.prix }}
+{% if s %}<span class="var {{ 'vert' if s.var24 >= 0 else 'rouge' }}">{{ '%+.2f'|format(s.var24) }}%</span>{% endif %}
+</div>
+</div>
+</div>
 
 <div class="fraicheur {{ d.fraicheur.etat }}">{{ d.fraicheur.texte }}</div>
 
 {% if cb %}
 <div class="bot-conseil {{ cb.couleur }}">
 <div class="bot-verdict">
-<span class="bot-emoji">{% if cb.couleur == 'vert' %}✅{% elif cb.couleur == 'rouge' %}🚫{% elif cb.couleur == 'jaune' %}⚠️{% else %}⏸️{% endif %}</span>
+<span class="bot-emoji">
+{% if cb.couleur == 'vert' %}✅{% elif cb.couleur == 'rouge' %}🚫{% elif cb.couleur == 'jaune' %}⚠️{% else %}⏸️{% endif %}
+</span>
 <span class="bot-verdict-txt">{{ cb.verdict }}</span>
 </div>
 <div class="bot-action">➡️ <b>{{ cb.action }}</b></div>
 <div class="bot-message">{{ cb.message }}</div>
-{% if cb.raisons %}<div class="bot-raisons"><b>Pourquoi :</b><ul>{% for r in cb.raisons %}<li>{{ r }}</li>{% endfor %}</ul></div>{% endif %}
+{% if cb.raisons %}
+<div class="bot-raisons">
+<b>Pourquoi :</b>
+<ul>
+{% for r in cb.raisons %}<li>{{ r }}</li>{% endfor %}
+</ul>
+</div>
+{% endif %}
 </div>
 {% endif %}
 
@@ -94,41 +111,59 @@
 
 {% if gen %}
 <div class="general {{ gen.couleur }}">
-<div class="general-titre">🧮 Tendance générale <span class="general-badge {{ gen.couleur }}">{{ gen.tendance }}</span></div>
+<div class="general-titre">
+🧮 Tendance générale
+<span class="general-badge {{ gen.couleur }}">{{ gen.tendance }}</span>
+</div>
 <div class="general-jauge">
 <div class="general-barre"><i class="ach" style="width:{{ gen.ach_gen }}%"></i></div>
-<div class="general-chiffres"><span class="vert">🟢 Acheteurs {{ gen.ach_gen }}%</span><span class="rouge">🔴 Vendeurs {{ gen.ven_gen }}%</span></div>
-<div class="general-score">Score : <b class="{{ gen.couleur }}">{{ '%+.1f'|format(gen.score_pct) }}%</b></div>
+<div class="general-chiffres">
+<span class="vert">🟢 Acheteurs {{ gen.ach_gen }}%</span>
+<span class="rouge">🔴 Vendeurs {{ gen.ven_gen }}%</span>
 </div>
-<div class="general-align"><b>Alignement :</b>
+<div class="general-score">
+Score : <b class="{{ gen.couleur }}">{{ '%+.1f'|format(gen.score_pct) }}%</b>
+<span class="pct">(M5×5 M15×4 M30×3 H1×2 H4×1)</span>
+</div>
+</div>
+<div class="general-align">
+<b>Alignement progressif :</b>
 <div class="align-chaine">
 {% for a in gen.align_detail %}
-<span class="align-item {{ 'vert' if a.sens == 'haussier' else 'rouge' if a.sens == 'baissier' else 'neutre' }}">{{ a.tf }}{% if a.sens == 'haussier' %}↑{% elif a.sens == 'baissier' %}↓{% else %}→{% endif %}</span>
+<span class="align-item {{ 'vert' if a.sens == 'haussier' else 'rouge' if a.sens == 'baissier' else 'neutre' }}">
+{{ a.tf }}{% if a.sens == 'haussier' %}↑{% elif a.sens == 'baissier' %}↓{% else %}→{% endif %}
+</span>
 {% if not loop.last %}<span class="align-fleche">→</span>{% endif %}
 {% endfor %}
-</div></div>
-{% if gen.confirmation %}<div class="confirmation {{ gen.confirmation.couleur }}">✅ {{ gen.confirmation.txt }}</div>{% endif %}
+</div>
+</div>
+{% if gen.confirmation %}
+<div class="confirmation {{ gen.confirmation.couleur }}">✅ {{ gen.confirmation.txt }}</div>
+{% endif %}
 </div>
 {% endif %}
 
 {% if d.guide %}
 {% set g = d.guide %}
 <div class="guide {{ g.feu }}">
-<div class="guide-titre">🧭 Guide : {{ g.sens }} — {% if g.feu == 'vert' %}✅ tu peux entrer{% else %}⏳ attends{% endif %}</div>
+<div class="guide-titre">🧭 Guide du trade : {{ g.sens }} — {% if g.feu == 'vert' %}✅ tu peux entrer{% else %}⏳ attends{% endif %}</div>
 <ol class="etapes">
-<li><b>Avant :</b> vérifie qu'aucune grosse annonce n'arrive dans l'heure.</li>
-<li><b>Quand :</b> à la clôture M5, vers <b>{{ g.heure }}</b> (Bénin).</li>
+<li><b>Avant d'entrer :</b> vérifie qu'aucune grosse annonce n'arrive dans l'heure.</li>
+<li><b>Quand :</b> à la clôture de la bougie M5, vers <b>{{ g.heure }}</b> (heure du Bénin).</li>
 <li><b>Ordre :</b> {{ g.sens }} au marché, autour de <b>{{ g.prix }}</b>.</li>
 {% if g.stop %}
-<li><b>Stop :</b> <b>{{ g.stop }}</b>. Ne l'éloigne JAMAIS.</li>
+<li><b>Stop loss :</b> <b>{{ g.stop }}</b>. Ne l'éloigne JAMAIS.</li>
 <li><b>Objectif :</b> <b>{{ g.objectif }}</b> (ratio {{ g.ratio }}).</li>
 <li><b>Lot :</b> <span class="lotbox" data-dist="{{ g.dist }}" data-gain="{{ g.dist_obj }}" data-contrat="{{ g.contrat or '' }}" data-niveau="{{ g.lot_niveau }}"><span class="lotres">Entre ton capital en haut.</span></span></li>
-<div class="lot-conseil {{ 'vert' if g.lot_niveau == 'PLEIN' else 'jaune' if g.lot_niveau == 'DEMI' else 'rouge' }}">🧮 <b>Lot :</b> {{ g.lot_txt }}</div>
-<li><b>Mi-chemin :</b> si le prix atteint <b>{{ g.moitie }}</b>, remonte ton stop à ton prix d'entrée.</li>
+<div class="lot-conseil {{ 'vert' if g.lot_niveau == 'PLEIN' else 'jaune' if g.lot_niveau == 'DEMI' else 'rouge' }}">
+🧮 <b>Lot :</b> {{ g.lot_txt }}
+</div>
+<li><b>Mi-chemin :</b> si le prix atteint <b>{{ g.moitie }}</b>, tu peux remonter ton stop à ton prix d'entrée.</li>
 {% endif %}
-<li><b>Si ça tourne mal :</b> stop touché → accepte la perte, arrête 30 min sur cette paire.</li>
-<li><b>Survie :</b> max 1 % par trade. Après 2 pertes de suite, arrête.</li>
+<li><b>Si ça tourne mal :</b> stop touché → accepte la perte, arrête-toi 30 min sur cette paire.</li>
+<li><b>Règle de survie :</b> max 1 % par trade. Après 2 pertes de suite, arrête pour la journée.</li>
 </ol>
+<div class="note">Teste en démo 2-3 semaines minimum. Le bot filtre, il ne garantit rien.</div>
 </div>
 {% endif %}
 
@@ -176,8 +211,33 @@
 </table>
 </div>
 
+<h3>🧪 Backtest</h3>
+{% if d.bt %}
+<div class="stats">
+<div class="tile"><small>Signaux</small><b>{{ d.bt.n }}</b></div>
+<div class="tile"><small>Réussite 1h</small><b class="{{ d.bt.couleur }}">{{ d.bt.pct }}%</b></div>
+<div class="tile"><small>Stop & objectif</small><b>{{ d.bt.sim_tp }} TP · {{ d.bt.sim_sl }} SL</b></div>
+<div class="tile"><small>Gain moyen</small><b class="{{ d.bt.sim_couleur }}">{{ '%+.2f'|format(d.bt.sim_r) if d.bt.sim_r else '—' }} R</b></div>
+</div>
+<div class="note">{{ d.bt.verdict }} {{ d.bt.sim_verdict }} Le spread n'est pas compté.</div>
+{% else %}
+<div class="note">Pas assez de données pour backtester.</div>
+{% endif %}
+
 </section>
 {% endfor %}
+
+<details class="aide">
+<summary>ℹ️ Comment lire le bot</summary>
+<ul>
+<li><b>🤖 Le bot te dit quoi faire</b> : "ENTRE MAINTENANT" (vert), "PRUDENCE — DEMI-LOT" (jaune), "N'ENTRE PAS" (rouge), "ATTENDRE" (gris).</li>
+<li><b>Chaque conseil est unique</b> : il combine session + timing + tendance H4/H1 + volatilité + résistance + ratio + corrélation.</li>
+<li><b>📒 Le journal du bot</b> garde la trace de ses conseils.</li>
+<li><b>🔥 Timing d'entrée</b> : ≤5 bougies M5 depuis le croisement EMA = frais (lot plein), 6-12 = en cours (demi-lot), >12 = tardif (n'entre pas).</li>
+<li>Toutes les bougies en cours sont ignorées : seules les clôturées comptent.</li>
+<li>Teste en démo 2-3 semaines minimum.</li>
+</ul>
+</details>
 
 </main>
 <script>
@@ -214,8 +274,11 @@ function lireSignaux() {
 function lireVerdicts() {
   var o = {};
   document.querySelectorAll('.bot-conseil').forEach(function (el) {
-    var s = el.closest('section.paire');
-    if (s) { var v = el.querySelector('.bot-verdict-txt'); if (v) o[s.id] = v.textContent.trim(); }
+    var section = el.closest('section.paire');
+    if (section) {
+      var v = el.querySelector('.bot-verdict-txt');
+      if (v) o[section.id] = v.textContent.trim();
+    }
   });
   return o;
 }
@@ -224,7 +287,10 @@ function estSignal(x) { return x === 'ACHAT' || x === 'VENTE'; }
 function calcLots() {
   var cap = parseFloat(document.getElementById('capital').value);
   var risk = parseFloat(document.getElementById('risque').value);
-  try { if (cap) localStorage.setItem('capital', String(cap)); if (risk) localStorage.setItem('risque', String(risk)); } catch (e) {}
+  try {
+    if (cap) localStorage.setItem('capital', String(cap));
+    if (risk) localStorage.setItem('risque', String(risk));
+  } catch (e) {}
   document.querySelectorAll('.lotbox').forEach(function (el) {
     var out = el.querySelector('.lotres');
     var dist = parseFloat(el.dataset.dist);
@@ -236,15 +302,16 @@ function calcLots() {
     if (niveau === 'DEMI') maxp = maxp / 2;
     if (!ct) { out.textContent = 'Lot non calculé. Perte max ' + maxp.toFixed(2) + ' $.'; return; }
     var lot = Math.floor(maxp / (dist * ct) * 100) / 100;
-    if (lot < 0.01) { out.textContent = 'Capital trop petit. 0.01 lot minimum.'; return; }
+    if (lot < 0.01) { out.textContent = 'Capital trop petit pour ce stop.'; return; }
     var prefix = niveau === 'DEMI' ? 'Lot (demi) : ' : 'Lot : ';
     out.textContent = prefix + lot.toFixed(2) + ' → perte max ≈ ' + (lot * dist * ct).toFixed(2) + ' $ · gain ≈ ' + (lot * gain * ct).toFixed(2) + ' $';
   });
 }
 try {
-  var c = localStorage.getItem('capital'); var r = localStorage.getItem('risque');
-  if (c) document.getElementById('capital').value = c;
-  if (r) document.getElementById('risque').value = r;
+  var capSauve = localStorage.getItem('capital');
+  var risqueSauve = localStorage.getItem('risque');
+  if (capSauve) document.getElementById('capital').value = capSauve;
+  if (risqueSauve) document.getElementById('risque').value = risqueSauve;
 } catch (e) {}
 document.getElementById('capital').addEventListener('input', calcLots);
 document.getElementById('risque').addEventListener('input', calcLots);
@@ -275,27 +342,35 @@ async function rafraichir() {
     var tm = doc.querySelector('.time');
     if (tm) document.querySelector('.time').textContent = tm.textContent;
     calcLots();
-    var nn = lireSignaux(); var nv = lireVerdicts();
-    var al = [];
-    Object.keys(nn).forEach(function (k) {
-      if (estSignal(nn[k]) && precedent[k] !== nn[k]) al.push('🔔 ' + nn[k] + ' ' + k);
-      var vo = precedentsVerdicts[k]; var vn = nv[k];
-      if (vn && vo && vo !== vn) {
-        if (vn.indexOf('ENTRE') >= 0) al.push('✅ ' + k + ' → ' + vn);
-        else if (vn.indexOf("N'ENTRE") >= 0) al.push('🚫 ' + k + ' → ' + vn);
-        else if (vn.indexOf('PRUDENCE') >= 0) al.push('⚠️ ' + k + ' → ' + vn);
+    var nouveaux = lireSignaux();
+    var nouveauxVerdicts = lireVerdicts();
+    var alertes = [];
+    Object.keys(nouveaux).forEach(function (k) {
+      if (estSignal(nouveaux[k]) && precedent[k] !== nouveaux[k]) alertes.push('🔔 ' + nouveaux[k] + ' ' + k);
+      var vOld = precedentsVerdicts[k];
+      var vNew = nouveauxVerdicts[k];
+      if (vNew && vOld && vOld !== vNew) {
+        if (vNew.indexOf('ENTRE') >= 0) alertes.push('✅ ' + k + ' → ' + vNew);
+        else if (vNew.indexOf("N'ENTRE") >= 0) alertes.push('🚫 ' + k + ' → ' + vNew);
+        else if (vNew.indexOf('PRUDENCE') >= 0) alertes.push('⚠️ ' + k + ' → ' + vNew);
       }
     });
-    precedent = nn; precedentsVerdicts = nv;
-    if (al.length) {
-      if (sonOn) bip(al.some(function (x) { return x.indexOf('✅') === 0; }) ? 'fort' : 'moyen');
-      document.title = '🔔 ' + al.join(' · ');
+    precedent = nouveaux;
+    precedentsVerdicts = nouveauxVerdicts;
+    if (alertes.length) {
+      if (sonOn) {
+        var fort = alertes.some(function (a) { return a.indexOf('✅') === 0; });
+        bip(fort ? 'fort' : 'moyen');
+      }
+      document.title = '🔔 ' + alertes.join(' · ');
       var barre = document.createElement('div');
       barre.style.cssText = 'position:fixed;top:0;left:0;right:0;background:linear-gradient(90deg,#00d4ff,#7b2ffc);color:#fff;padding:.6rem 1rem;font-weight:700;font-size:.85rem;z-index:9999;text-align:center;';
-      barre.textContent = al.join(' · ');
+      barre.textContent = alertes.join(' · ');
       document.body.appendChild(barre);
       setTimeout(function () { barre.remove(); }, 8000);
-    } else { document.title = 'Multi-TF Bot'; }
+    } else {
+      document.title = 'Multi-TF Bot';
+    }
     sec = 300;
   } catch (e) { sec = 60; }
   enCours = false;
