@@ -35,16 +35,8 @@ _cache_yahoo = {}
 POIDS_TF = {"M5": 5, "M15": 4, "M30": 3, "H1": 2, "H4": 1}
 ORDRE_TF = ["M5", "M15", "M30", "H1", "H4"]
 
-SESSIONS = {
-    "asie":     {"debut": 1,  "fin": 9,  "qualite": "faible",  "txt": "Asie (peu de volume, signaux peu fiables)"},
-    "londres":  {"debut": 9,  "fin": 18, "qualite": "forte",   "txt": "Londres (session active, bonne fiabilité)"},
-    "newyork":  {"debut": 15, "fin": 23, "qualite": "forte",   "txt": "New York (session active, bonne fiabilité)"},
-    "nuit":     {"debut": 23, "fin": 1,  "qualite": "faible",  "txt": "Nuit (marché calme)"},
-}
-
 CORRELATIONS = {"EURUSD": ["GBPUSD"], "GBPUSD": ["EURUSD"], "XAUUSD": [], "V75": []}
 
-SEUIL_VOLATILITE_MIN = 0.05
 SEUIL_AGITATION_MAX = 70
 DUREE_SIGNAL_MIN = 30
 JOURNAL_MAX = 200
@@ -54,17 +46,27 @@ TIMING_MOYEN_MAX = 12
 
 # ───────────── CONFIG PATTERNS ─────────────
 DB_PATH = os.getenv("DB_PATH", "data/patterns.db")
-BACKFILL_ANNEES = 1          # 1 an d'historique
-BACKFILL_TF = "1h"           # on backfill en H1 (le plus fiable)
-BACKFILL_RANGE = "2y"        # Yahoo supporte 2y sur 1h
-PATTERN_FENETRE = 4          # on regarde 4 bougies H1 après le pattern = 4h
-PATTERN_SEUIL_MIN = 10       # au moins 10 occurrences pour être affiché
+BACKFILL_ANNEES = 1
+BACKFILL_TF = "1h"
+BACKFILL_RANGE = "2y"
+PATTERN_FENETRE = 4           # 4 bougies H1 = 4h après le pattern
+PATTERN_SEUIL_MIN = 20        # minimum 20 occurrences pour être affiché
+
+
+def logged():
+    return session.get("admin") is True
+
+
+def fp(pair, x):
+    return f"{x:.{DECIMALES.get(pair, 5)}f}"
 
 
 # ───────────── BASE DE DONNÉES ─────────────
 
 def init_db():
-    os.makedirs(os.path.dirname(DB_PATH) if os.path.dirname(DB_PATH) else ".", exist_ok=True)
+    d = os.path.dirname(DB_PATH)
+    if d:
+        os.makedirs(d, exist_ok=True)
     con = sqlite3.connect(DB_PATH)
     con.execute("""
         CREATE TABLE IF NOT EXISTS observations (
@@ -72,14 +74,15 @@ def init_db():
             pair TEXT NOT NULL,
             tf TEXT NOT NULL,
             ts INTEGER NOT NULL,
-            signature TEXT NOT NULL,
-            session TEXT,
+            date_txt TEXT,
             heure INTEGER,
-            sens TEXT,
-            pct_ach REAL,
-            pct_ven REAL,
+            session TEXT,
+            signature TEXT NOT NULL,
+            tendance TEXT,
             ema_signal TEXT,
             ema_depuis INTEGER,
+            pct_ach REAL,
+            pct_ven REAL,
             agitation REAL,
             motif TEXT,
             grande INTEGER,
@@ -95,25 +98,16 @@ def init_db():
     """)
     con.execute("CREATE INDEX IF NOT EXISTS idx_sig ON observations(signature)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_pair ON observations(pair)")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_date ON observations(date_txt)")
     con.commit()
     con.close()
 
 
 def db_connect():
-    return sqlite3.connect(DB_PATH, timeout=20)
+    return sqlite3.connect(DB_PATH, timeout=30)
 
 
 init_db()
-
-
-# ───────────── LOGIN ─────────────
-
-def logged():
-    return session.get("admin") is True
-
-
-def fp(pair, x):
-    return f"{x:.{DECIMALES.get(pair, 5)}f}"
 
 
 # ───────────── RÉCUPÉRATION ─────────────
@@ -144,7 +138,7 @@ def recuperer_bougies_yahoo(symbol, interval, range_):
             return data
     try:
         url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval={interval}&range={range_}"
-        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=20)
+        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=25)
         data = r.json()["chart"]["result"][0]
         ts_list = data["timestamp"]
         q = data["indicators"]["quote"][0]
@@ -367,7 +361,7 @@ def analyser(tf, bougies):
     }
 
 
-# ───────────── PATTERNS : EXTRACTION ET STOCKAGE ─────────────
+# ───────────── APPRENTISSAGE PATTERNS ─────────────
 
 def session_pour_heure(h):
     if 1 <= h < 9:
@@ -381,24 +375,17 @@ def session_pour_heure(h):
     return "nuit"
 
 
-def signature_pattern(a, b_prev=None):
-    """Signature simplifiée d'une bougie = combinaison de catégories.
-    Ne pas figer les patterns : on combine des catégories stables."""
+def signature_pattern(a):
+    """Signature simplifiée : ne fige pas les patterns, les laisse émerger."""
     parts = []
-    # Tendance
     parts.append(f"T:{a['tendance'][:3]}")
-    # EMA
     parts.append(f"E:{a['ema_signal'][:3] if a['ema_signal'] else 'neu'}")
-    # Catégorie de durée EMA (jeune/vieille)
     dep = a["ema_depuis"] or 0
     parts.append("D:j" if dep <= 5 else ("D:m" if dep <= 12 else "D:v"))
-    # Acheteurs
     pa = a["pct_acheteurs"]
     parts.append("A:f" if pa >= 70 else ("A:m" if pa >= 55 else ("A:e" if pa >= 45 else "A:b")))
-    # Agitation
     ag = a["pct_agitation"]
     parts.append("G:c" if ag <= 30 else ("G:m" if ag <= 55 else "G:h"))
-    # Motif
     if a["motif_haussier"]:
         parts.append("M:h")
     elif a["motif_baissier"]:
@@ -411,7 +398,6 @@ def signature_pattern(a, b_prev=None):
 
 
 def pattern_vers_txt(sig):
-    """Traduit une signature en texte lisible."""
     parts = sig.split("|")
     d = dict(p.split(":") for p in parts)
     txt = []
@@ -430,39 +416,36 @@ def pattern_vers_txt(sig):
     return " · ".join([x for x in txt if x])
 
 
-def stocker_observations(pair, series_h1):
-    """Analyse l'historique H1 et stocke chaque bougie avec ce qui suit."""
-    if len(series_h1) < 30:
+def stocker_observations(pair, bougies_h1):
+    if len(bougies_h1) < 30:
         return 0
-    bougies = series_h1
-    clotures = [b["close"] for b in bougies]
     con = db_connect()
-    total_inseres = 0
-    # On commence après 30 bougies, on s'arrête 4 bougies avant la fin (fenêtre futur)
-    for i in range(30, len(bougies) - PATTERN_FENETRE):
-        window = bougies[:i + 1]
+    n_ins = 0
+    for i in range(30, len(bougies_h1) - PATTERN_FENETRE):
+        window = bougies_h1[:i + 1]
         a = analyser("H1", window)
         if not a:
             continue
-        # Futur = les 4 bougies qui suivent
-        futur = bougies[i + 1:i + 1 + PATTERN_FENETRE]
+        futur = bougies_h1[i + 1:i + 1 + PATTERN_FENETRE]
         if len(futur) < PATTERN_FENETRE:
             continue
         prix_entree = a["prix"]
         futur_haut = max(b["high"] for b in futur)
         futur_bas = min(b["low"] for b in futur)
         futur_close = futur[-1]["close"]
-        variation_pct = (futur_close - prix_entree) / prix_entree * 100
-        if abs(variation_pct) < 0.02:
+        var_pct = (futur_close - prix_entree) / prix_entree * 100
+        if abs(var_pct) < 0.02:
             direction = "plat"
-        elif variation_pct > 0:
+        elif var_pct > 0:
             direction = "haut"
         else:
             direction = "bas"
-        amplitude_pct = (futur_haut - futur_bas) / prix_entree * 100
+        amp_pct = (futur_haut - futur_bas) / prix_entree * 100
 
-        ts = bougies[i]["t"]
-        heure = datetime.fromtimestamp(ts, BENIN).hour
+        ts = bougies_h1[i]["t"]
+        dt = datetime.fromtimestamp(ts, BENIN)
+        date_txt = dt.strftime("%Y-%m-%d")
+        heure = dt.hour
         sess = session_pour_heure(heure)
         sig = signature_pattern(a)
         motif_txt = ",".join(m["txt"] for m in a["motifs"]) if a["motifs"] else ""
@@ -470,56 +453,40 @@ def stocker_observations(pair, series_h1):
         try:
             con.execute("""
                 INSERT OR IGNORE INTO observations
-                (pair, tf, ts, signature, session, heure, sens, pct_ach, pct_ven,
-                 ema_signal, ema_depuis, agitation, motif, grande, prix,
-                 futur_haut, futur_bas, futur_close, variation_pct, direction, amplitude_pct)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                (pair, tf, ts, date_txt, heure, session, signature, tendance,
+                 ema_signal, ema_depuis, pct_ach, pct_ven, agitation, motif, grande,
+                 prix, futur_haut, futur_bas, futur_close, variation_pct, direction, amplitude_pct)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """, (
-                pair, "H1", ts, sig, sess, heure, a["tendance"],
-                a["pct_acheteurs"], a["pct_vendeurs"],
-                a["ema_signal"], a["ema_depuis"] or 0, a["pct_agitation"],
-                motif_txt, 1 if a["grande"] else 0, prix_entree,
-                futur_haut, futur_bas, futur_close,
-                round(variation_pct, 4), direction, round(amplitude_pct, 4)
+                pair, "H1", ts, date_txt, heure, sess, sig, a["tendance"],
+                a["ema_signal"], a["ema_depuis"] or 0, a["pct_acheteurs"], a["pct_vendeurs"],
+                a["pct_agitation"], motif_txt, 1 if a["grande"] else 0, prix_entree,
+                futur_haut, futur_bas, futur_close, round(var_pct, 4),
+                direction, round(amp_pct, 4)
             ))
-            total_inseres += 1
+            n_ins += 1
         except Exception as e:
-            print(f"Erreur insert pattern: {e}")
+            print(f"Insert pattern {pair}: {e}")
     con.commit()
     con.close()
-    return total_inseres
+    return n_ins
 
 
 def backfill_patterns():
-    """Télécharge 1 an d'historique H1 et stocke les observations."""
-    print("🔄 Backfill patterns en cours...")
+    print("🔄 Backfill patterns...")
     for pair, symbole in YAHOO_PAIRS.items():
         try:
             bougies = recuperer_bougies_yahoo(symbole, BACKFILL_TF, BACKFILL_RANGE)
-            # On limite à BACKFILL_ANNEES
             cutoff = time.time() - BACKFILL_ANNEES * 365 * 24 * 3600
             bougies = [b for b in bougies if b["t"] >= cutoff]
             n = stocker_observations(pair, bougies)
-            print(f"  {pair}: {len(bougies)} bougies, {n} observations stockées")
+            print(f"  {pair}: {len(bougies)} bougies, {n} observations")
         except Exception as e:
-            print(f"  Erreur backfill {pair}: {e}")
+            print(f"  Erreur {pair}: {e}")
     print("✅ Backfill terminé")
 
 
-def pattern_existe_deja(pair):
-    """Vérifie si on a déjà des observations pour cette paire."""
-    try:
-        con = db_connect()
-        cur = con.execute("SELECT COUNT(*) FROM observations WHERE pair=?", (pair,))
-        n = cur.fetchone()[0]
-        con.close()
-        return n > 0
-    except Exception:
-        return False
-
-
-def top_patterns(min_occurrences=PATTERN_SEUIL_MIN, limit=20):
-    """Retourne les patterns les plus fiables."""
+def top_patterns(min_occ=PATTERN_SEUIL_MIN, limit=30):
     try:
         con = db_connect()
         cur = con.execute("""
@@ -528,83 +495,56 @@ def top_patterns(min_occurrences=PATTERN_SEUIL_MIN, limit=20):
                    SUM(CASE WHEN direction='haut' THEN 1 ELSE 0 END) as n_haut,
                    SUM(CASE WHEN direction='bas' THEN 1 ELSE 0 END) as n_bas,
                    AVG(variation_pct) as var_moy,
-                   AVG(amplitude_pct) as amp_moy
+                   AVG(amplitude_pct) as amp_moy,
+                   MIN(date_txt) as d_min,
+                   MAX(date_txt) as d_max
             FROM observations
             GROUP BY signature
             HAVING n >= ?
             ORDER BY n DESC
             LIMIT ?
-        """, (min_occurrences, limit))
+        """, (min_occ, limit))
         rows = cur.fetchall()
         con.close()
-        resultats = []
-        for sig, n, n_haut, n_bas, var_moy, amp_moy in rows:
-            pct_haut = round(n_haut / n * 100, 1) if n else 0
-            pct_bas = round(n_bas / n * 100, 1) if n else 0
-            if pct_haut >= 55:
-                biais, biais_couleur = "📈 monte", "vert"
-            elif pct_bas >= 55:
-                biais, biais_couleur = "📉 descend", "rouge"
+        out = []
+        for sig, n, n_haut, n_bas, var_moy, amp_moy, dmin, dmax in rows:
+            pct_h = round(n_haut / n * 100, 1) if n else 0
+            pct_b = round(n_bas / n * 100, 1) if n else 0
+            if pct_h >= 60:
+                biais, bcls = "📈 monte", "vert"
+            elif pct_b >= 60:
+                biais, bcls = "📉 descend", "rouge"
             else:
-                biais, biais_couleur = "↔️ plat", ""
-            resultats.append({
-                "signature": sig,
-                "texte": pattern_vers_txt(sig),
-                "n": n,
-                "n_haut": n_haut,
-                "n_bas": n_bas,
-                "pct_haut": pct_haut,
-                "pct_bas": pct_bas,
+                biais, bcls = "↔️ plat", ""
+            out.append({
+                "signature": sig, "texte": pattern_vers_txt(sig),
+                "n": n, "n_haut": n_haut, "n_bas": n_bas,
+                "pct_haut": pct_h, "pct_bas": pct_b,
                 "var_moy": round(var_moy, 3) if var_moy else 0,
                 "amp_moy": round(amp_moy, 3) if amp_moy else 0,
-                "biais": biais,
-                "biais_couleur": biais_couleur,
+                "biais": biais, "biais_couleur": bcls,
+                "date_min": dmin, "date_max": dmax,
             })
-        return resultats
+        return out
     except Exception as e:
-        print(f"Erreur top_patterns: {e}")
+        print(f"top_patterns: {e}")
         return []
 
 
-def stats_par_pattern(signature):
-    """Détail d'un pattern donné."""
+def pattern_occurrences_recentes(signature, limit=20):
     try:
         con = db_connect()
         cur = con.execute("""
-            SELECT pair, COUNT(*),
-                   SUM(CASE WHEN direction='haut' THEN 1 ELSE 0 END),
-                   SUM(CASE WHEN direction='bas' THEN 1 ELSE 0 END),
-                   AVG(variation_pct),
-                   AVG(amplitude_pct)
+            SELECT pair, date_txt, heure, prix, variation_pct, direction, amplitude_pct
             FROM observations
             WHERE signature=?
-            GROUP BY pair
-        """, (signature,))
+            ORDER BY ts DESC
+            LIMIT ?
+        """, (signature, limit))
         rows = cur.fetchall()
         con.close()
-        return [{"pair": r[0], "n": r[1], "haut": r[2], "bas": r[3],
-                 "var_moy": round(r[4], 3) if r[4] else 0,
-                 "amp_moy": round(r[5], 3) if r[5] else 0} for r in rows]
-    except Exception:
-        return []
-
-
-def stats_par_heure(signature):
-    """Répartition par heure du pattern."""
-    try:
-        con = db_connect()
-        cur = con.execute("""
-            SELECT heure, COUNT(*),
-                   SUM(CASE WHEN direction='haut' THEN 1 ELSE 0 END),
-                   SUM(CASE WHEN direction='bas' THEN 1 ELSE 0 END)
-            FROM observations
-            WHERE signature=?
-            GROUP BY heure
-            ORDER BY heure
-        """, (signature,))
-        rows = cur.fetchall()
-        con.close()
-        return [{"heure": r[0], "n": r[1], "haut": r[2], "bas": r[3]} for r in rows]
+        return [{"pair": r[0], "date": r[1], "heure": r[2], "prix": r[3],
+                 "var": r[4], "direction": r[5], "amp": r[6]} for r in rows]
     except Exception:
         return []
 
@@ -622,6 +562,20 @@ def total_observations():
         return 0, 0
 
 
+def observations_par_paire():
+    try:
+        con = db_connect()
+        cur = con.execute("""
+            SELECT pair, COUNT(*), MIN(date_txt), MAX(date_txt)
+            FROM observations GROUP BY pair
+        """)
+        rows = cur.fetchall()
+        con.close()
+        return [{"pair": r[0], "n": r[1], "d_min": r[2], "d_max": r[3]} for r in rows]
+    except Exception:
+        return []
+
+
 # ───────────── TIMING ─────────────
 
 def calc_timing_entree(m5):
@@ -630,7 +584,7 @@ def calc_timing_entree(m5):
     dep = m5["ema_depuis"]
     if dep <= TIMING_FRAIS_MAX:
         return {"niveau": "FRAIS", "couleur": "vert", "emoji": "🔥",
-                "txt": f"Croisement EMA M5 très récent ({dep} bougies). Tu entres au tout début du mouvement.",
+                "txt": f"Croisement EMA M5 très récent ({dep} bougies). Tu entres au début du mouvement.",
                 "lot_conseil": "LOT PLEIN", "lot_ratio": 1.0}
     if dep <= TIMING_MOYEN_MAX:
         return {"niveau": "EN COURS", "couleur": "jaune", "emoji": "⏳",
@@ -703,11 +657,11 @@ def calc_tendance_generale(tfs):
         if m15["tendance"] == m30["tendance"] == h1["tendance"] == "haussier":
             if m5["ema_signal"] == "haussier" and (m5["ema_depuis"] or 99) <= 3:
                 confirmation = {"sens": "ACHAT", "couleur": "vert",
-                                "txt": "M15+M30+H1 haussiers + croisement EMA M5 haussier récent (après clôture) → ACHAT confirmé."}
+                                "txt": "M15+M30+H1 haussiers + croisement EMA M5 haussier récent."}
         elif m15["tendance"] == m30["tendance"] == h1["tendance"] == "baissier":
             if m5["ema_signal"] == "baissier" and (m5["ema_depuis"] or 99) <= 3:
                 confirmation = {"sens": "VENTE", "couleur": "rouge",
-                                "txt": "M15+M30+H1 baissiers + croisement EMA M5 baissier récent (après clôture) → VENTE confirmée."}
+                                "txt": "M15+M30+H1 baissiers + croisement EMA M5 baissier récent."}
     return {"ach_gen": ach_gen, "ven_gen": ven_gen, "score_pct": score_pct,
             "tendance": tendance, "couleur": couleur,
             "align_sens": align_sens, "align_n": align_n,
@@ -741,14 +695,13 @@ def generer_conseil(pair, d, session_act, autres_cond, historique):
 
     if not tfs or not gen:
         return {"verdict": "PAS DE DONNÉES", "couleur": "gris", "action": "ATTENDRE",
-                "message": f"Je n'ai pas assez de données sur {pair} pour te conseiller. Attends le prochain cycle.",
-                "raisons": ["Données insuffisantes ou marché fermé."]}
+                "message": f"Pas assez de données sur {pair}.", "raisons": ["Données insuffisantes."]}
 
     if sig not in ("ACHAT", "VENTE"):
         manque = [k for k, v in cond.get("details", {}).items() if not v]
         msg = f"Pas de signal sur {pair}. Le marché n'est pas aligné."
         if manque:
-            msg += f" Il manque : {', '.join(manque[:3])}{'...' if len(manque) > 3 else ''}."
+            msg += f" Il manque : {', '.join(manque[:3])}."
         return {"verdict": "ATTENDRE", "couleur": "gris", "action": "NE RIEN FAIRE",
                 "message": msg, "raisons": ["Aucun signal complet détecté."]}
 
@@ -760,9 +713,9 @@ def generer_conseil(pair, d, session_act, autres_cond, historique):
 
     if timing:
         if timing["niveau"] == "EN COURS":
-            raisons.append(f"Timing d'entrée EN COURS ({tfs['M5']['ema_depuis']} bougies depuis le croisement EMA M5).")
+            raisons.append(f"Timing EN COURS ({tfs['M5']['ema_depuis']} bougies depuis le croisement EMA M5).")
         elif timing["niveau"] == "TARDIF":
-            raisons.append(f"Timing d'entrée TARDIF ({tfs['M5']['ema_depuis']} bougies). Le mouvement est déjà trop avancé.")
+            raisons.append(f"Timing TARDIF ({tfs['M5']['ema_depuis']} bougies). Mouvement trop avancé.")
 
     h4 = tfs.get("H4")
     h1 = tfs.get("H1")
@@ -770,7 +723,7 @@ def generer_conseil(pair, d, session_act, autres_cond, historique):
     h4_contre = h4 and h4["tendance"] == contre
     h1_contre = h1 and h1["tendance"] == contre
     if h4_contre and h1_contre:
-        raisons.append(f"H4 ET H1 sont {contre}s (contre ton signal). C'est un pullback dans une tendance inverse.")
+        raisons.append(f"H4 ET H1 sont {contre}s (contre ton signal). Pullback dans une tendance inverse.")
     elif h4_contre:
         raisons.append(f"H4 est {contre} (contre ton signal). Le fond est contre toi.")
     elif h1_contre:
@@ -788,14 +741,14 @@ def generer_conseil(pair, d, session_act, autres_cond, historique):
 
     m5 = tfs["M5"]
     if m5["grande"]:
-        raisons.append(f"Grosse bougie M5 (×{m5['taille_x']}). Le mouvement est déjà fait d'un coup.")
+        raisons.append(f"Grosse bougie M5 (×{m5['taille_x']}). Mouvement déjà fait d'un coup.")
 
     if niv and h1_data:
         mm = h1_data["prix"] * 0.001
         if achat and niv["res_brut"] is not None and niv["res_brut"] - m5["prix"] < mm:
-            raisons.append(f"Résistance proche ({niv['res']}). Le prix peut buter contre.")
+            raisons.append(f"Résistance proche ({niv['res']}).")
         if not achat and niv["sup_brut"] is not None and m5["prix"] - niv["sup_brut"] < mm:
-            raisons.append(f"Support proche ({niv['sup']}). Le prix peut rebondir contre.")
+            raisons.append(f"Support proche ({niv['sup']}).")
 
     if historique:
         maintenant = time.time()
@@ -803,139 +756,38 @@ def generer_conseil(pair, d, session_act, autres_cond, historique):
             if h["pair"] == pair and h["sens"] == sig:
                 age = (maintenant - h["t"]) / 60
                 if age < DUREE_SIGNAL_MIN:
-                    raisons.append(f"Signal {sig} identique donné il y a {int(age)} min. C'est le même mouvement.")
+                    raisons.append(f"Signal {sig} identique il y a {int(age)} min. C'est le même mouvement.")
                 break
 
-    correlees = CORRELATIONS.get(pair, [])
-    for c in correlees:
+    for c in CORRELATIONS.get(pair, []):
         if c in autres_cond and autres_cond[c].get("signal") == sig:
-            raisons.append(f"{c} a le même signal. Prendre les deux = doubler ton risque.")
+            raisons.append(f"{c} a le même signal. Doubler ton risque.")
 
     if bt and bt["n"] >= 10 and bt["pct"] is not None and bt["pct"] < 45:
         raisons.append(f"Sur le passé, ce signal n'a réussi que {bt['pct']}% du temps.")
 
-    bloquants = [r for r in raisons if "pullback" in r or "trop avancé" in r or "pas d'objectif" in r.lower() or "doubler ton risque" in r or "peu fiables" in r]
+    bloquants = [r for r in raisons if "pullback" in r or "trop avancé" in r or "pas d'objectif" in r.lower() or "doubler ton risque" in r.lower() or "peu fiables" in r]
     avertissements = [r for r in raisons if r not in bloquants]
 
     if timing and timing["niveau"] == "TARDIF":
         return {"verdict": "N'ENTRE PAS", "couleur": "rouge", "action": "ATTENDRE LE PROCHAIN CROISEMENT",
-                "message": f"Le signal {sig} sur {pair} est trop tardif. Le croisement EMA M5 date de {tfs['M5']['ema_depuis']} bougies : le mouvement est déjà fait. N'entre pas, tu achèterais le sommet (ou vendrais le creux). Attends qu'un nouveau croisement se forme.",
+                "message": f"Signal {sig} sur {pair} trop tardif. Le croisement EMA M5 date de {tfs['M5']['ema_depuis']} bougies : le mouvement est déjà fait. Attends un nouveau croisement.",
                 "raisons": raisons}
 
     if bloquants:
         return {"verdict": "N'ENTRE PAS", "couleur": "rouge", "action": "PASSER CE TRADE",
-                "message": f"J'ai détecté un signal {sig} sur {pair} MAIS quelque chose bloque. Ne prends pas ce trade en l'état.",
+                "message": f"Signal {sig} sur {pair} MAIS quelque chose bloque.",
                 "raisons": raisons}
 
     if avertissements:
         return {"verdict": "PRUDENCE — DEMI-LOT", "couleur": "jaune", "action": "RÉDUIRE LE LOT DE MOITIÉ",
-                "message": f"Signal {sig} sur {pair}, mais il y a des points de vigilance. Si tu prends ce trade, réduis ton lot de moitié et sois prêt à sortir vite.",
+                "message": f"Signal {sig} sur {pair}, avec des points de vigilance.",
                 "raisons": raisons}
 
     lot_msg = "lot plein" if not timing or timing["niveau"] == "FRAIS" else "demi-lot"
     return {"verdict": "ENTRE MAINTENANT", "couleur": "vert", "action": f"ACHAT/VENTE AU MARCHÉ — {lot_msg.upper()}",
-            "message": f"Setup propre sur {pair}. Signal {sig}, timing {timing['niveau'] if timing else 'OK'}, tout est aligné. Entre à la clôture M5 avec le {lot_msg}, respecte le stop et l'objectif.",
+            "message": f"Setup propre sur {pair}. Signal {sig}, timing {timing['niveau'] if timing else 'OK'}. Entre à la clôture M5 avec le {lot_msg}.",
             "raisons": raisons or ["Tous les filtres au vert."]}
-
-
-# ───────────── FILTRES ─────────────
-
-def filtre_volatilite(tfs):
-    h1 = tfs.get("H1")
-    if not h1:
-        return {"ok": False, "txt": "Pas de données H1.", "cls": "jaune"}
-    agitation = h1.get("pct_agitation", 0)
-    if agitation > SEUIL_AGITATION_MAX:
-        return {"ok": False, "cls": "jaune", "txt": f"Marché trop agité ({agitation}%)."}
-    return {"ok": True, "cls": "vert", "txt": f"Volatilité correcte ({agitation}%)."}
-
-
-def filtre_tendance_superieure(tfs, sens_signal):
-    if not sens_signal or sens_signal not in ("haussier", "baissier"):
-        return {"ok": True, "cls": "", "txt": ""}
-    h4 = tfs.get("H4")
-    h1 = tfs.get("H1")
-    if not h4 or not h1:
-        return {"ok": True, "cls": "", "txt": ""}
-    contre = "baissier" if sens_signal == "haussier" else "haussier"
-    h4_contre = h4["tendance"] == contre
-    h1_contre = h1["tendance"] == contre
-    if h4_contre and h1_contre:
-        return {"ok": False, "cls": "rouge", "txt": f"H4 ET H1 sont {contre}s (contre ton signal). Pullback."}
-    if h4_contre:
-        return {"ok": False, "cls": "jaune", "txt": f"H4 est {contre} (contre ton signal)."}
-    if h1_contre:
-        return {"ok": False, "cls": "jaune", "txt": f"H1 est {contre} (contre ton signal)."}
-    return {"ok": True, "cls": "vert", "txt": "H4 et H1 dans le sens du signal."}
-
-
-def filtre_session():
-    s = session_actuelle()
-    if s["qualite"] in ("excellente", "forte"):
-        return {"ok": True, "cls": "vert", "txt": f"{s['txt']}."}
-    return {"ok": False, "cls": "jaune", "txt": f"{s['txt']}. Évite de trader maintenant."}
-
-
-def filtre_duplication(pair, sens, historique):
-    if not historique or not sens:
-        return {"ok": True, "cls": "", "txt": ""}
-    maintenant = time.time()
-    for h in reversed(historique):
-        if h["pair"] == pair and h["sens"] == sens:
-            age_min = (maintenant - h["t"]) / 60
-            if age_min < DUREE_SIGNAL_MIN:
-                return {"ok": False, "cls": "jaune", "txt": f"Signal {sens} identique il y a {int(age_min)} min."}
-            break
-    return {"ok": True, "cls": "", "txt": ""}
-
-
-def filtre_correlation(pair, sens, autres_cond):
-    if not sens or sens not in ("ACHAT", "VENTE") or not autres_cond:
-        return {"ok": True, "cls": "", "txt": ""}
-    correlees = CORRELATIONS.get(pair, [])
-    conflits = [c for c in correlees if c in autres_cond and autres_cond[c].get("signal") == sens]
-    if conflits:
-        return {"ok": False, "cls": "jaune", "txt": f"{', '.join(conflits)} a aussi un signal {sens}."}
-    return {"ok": True, "cls": "", "txt": ""}
-
-
-def filtre_timing(m5):
-    timing = calc_timing_entree(m5)
-    if not timing:
-        return None
-    if timing["niveau"] == "FRAIS":
-        return {"nom": "Timing d'entrée", "ok": True, "cls": "vert", "txt": timing["txt"]}
-    if timing["niveau"] == "EN COURS":
-        return {"nom": "Timing d'entrée", "ok": False, "cls": "jaune", "txt": timing["txt"]}
-    return {"nom": "Timing d'entrée", "ok": False, "cls": "rouge", "txt": timing["txt"]}
-
-
-def filtre_global(tfs, cond_base, pair, sens_signal, historique, autres_cond):
-    filtres = []
-    filtres.append({"nom": "Session", **filtre_session()})
-    filtres.append({"nom": "Volatilité", **filtre_volatilite(tfs)})
-    if sens_signal:
-        filtres.append({"nom": "Tendance H4/H1", **filtre_tendance_superieure(tfs, sens_signal)})
-    if "M5" in tfs:
-        f_timing = filtre_timing(tfs["M5"])
-        if f_timing:
-            filtres.append(f_timing)
-    f_dup = filtre_duplication(pair, sens_signal, historique)
-    if f_dup["txt"]:
-        filtres.append({"nom": "Signal récent", **f_dup})
-    f_corr = filtre_correlation(pair, sens_signal, autres_cond)
-    if f_corr["txt"]:
-        filtres.append({"nom": "Corrélation", **f_corr})
-    bloquants = [f for f in filtres if f["ok"] is False and f["cls"] == "rouge"]
-    avertissements = [f for f in filtres if f["ok"] is False and f["cls"] == "jaune"]
-    if bloquants:
-        return {"filtres": filtres, "verdict": "BLOQUÉ", "couleur": "rouge",
-                "conseil": "🚫 NE PRENDS PAS ce trade. " + " ".join(f["txt"] for f in bloquants)}
-    if avertissements:
-        return {"filtres": filtres, "verdict": "PRUDENCE", "couleur": "jaune",
-                "conseil": "⚠️ Trade possible mais risqué. " + " ".join(f["txt"] for f in avertissements)}
-    return {"filtres": filtres, "verdict": "FEU VERT", "couleur": "vert",
-            "conseil": "✅ Tous les filtres sont au vert. Tu peux trader."}
 
 
 # ───────────── STATS ─────────────
@@ -1168,7 +1020,7 @@ def backtest(series, pair="", horizon=12, test=1000, max_trade=48):
     total, gagnes = n["ACHAT"] + n["VENTE"], w["ACHAT"] + w["VENTE"]
     pct = round(gagnes / total * 100, 1) if total else None
     if total < 8:
-        verdict, couleur = "Trop peu de signaux pour conclure.", ""
+        verdict, couleur = "Trop peu de signaux.", ""
     elif pct >= 55:
         verdict, couleur = "Plutôt bon sur cette période.", "vert"
     elif pct >= 45:
@@ -1269,19 +1121,19 @@ def alertes_signal(cond, tfs, niv, sltp, bt, mm_h1):
     m5, m15 = tfs["M5"], tfs["M15"]
     prix = m5["prix"]
     if achat and niv and niv["res_brut"] is not None and niv["res_brut"] - prix < mm_h1:
-        al.append({"txt": f"⚠️ Résistance proche ({niv['res']}).", "cls": "jaune"})
+        al.append({"txt": f"Résistance proche ({niv['res']}).", "cls": "jaune"})
     if not achat and niv and niv["sup_brut"] is not None and prix - niv["sup_brut"] < mm_h1:
-        al.append({"txt": f"⚠️ Support proche ({niv['sup']}).", "cls": "jaune"})
+        al.append({"txt": f"Support proche ({niv['sup']}).", "cls": "jaune"})
     if m5["grande"]:
-        al.append({"txt": f"⚠️ Grosse bougie M5 (×{m5['taille_x']}).", "cls": "jaune"})
+        al.append({"txt": f"Grosse bougie M5 (×{m5['taille_x']}).", "cls": "jaune"})
     if sltp:
         cote = sltp["achat" if achat else "vente"]
         if cote is None:
-            al.append({"txt": "⚠️ Pas d'objectif clair.", "cls": "jaune"})
+            al.append({"txt": "Pas d'objectif clair.", "cls": "jaune"})
         elif cote["ok"]:
-            al.append({"txt": f"✅ Ratio {cote['ratio']}.", "cls": "vert"})
+            al.append({"txt": f"Ratio {cote['ratio']}.", "cls": "vert"})
         else:
-            al.append({"txt": f"⚠️ Ratio {cote['ratio']} sous 1,5.", "cls": "jaune"})
+            al.append({"txt": f"Ratio {cote['ratio']} sous 1,5.", "cls": "jaune"})
     return al
 
 
@@ -1296,16 +1148,16 @@ def construire_guide(pair, cond, tfs, sltp):
     timing = cond.get("timing")
     feu = "vert"
     lot_niveau = "PLEIN"
-    lot_txt = "Lot plein autorisé : tu entres au début du mouvement."
+    lot_txt = "Lot plein autorisé."
     if timing:
         if timing["niveau"] == "EN COURS":
             feu = "orange"
             lot_niveau = "DEMI"
-            lot_txt = "Demi-lot conseillé : le mouvement est déjà lancé."
+            lot_txt = "Demi-lot conseillé."
         elif timing["niveau"] == "TARDIF":
             feu = "orange"
             lot_niveau = "ATTENDRE"
-            lot_txt = "N'ENTRE PAS : le mouvement est trop avancé."
+            lot_txt = "N'ENTRE PAS."
     g = {"sens": sig, "feu": feu, "heure": datetime.fromtimestamp(nxt, BENIN).strftime("%H:%M"),
          "prix": fp(pair, prix), "contrat": CONTRAT.get(pair), "stop": None,
          "timing": timing, "lot_niveau": lot_niveau, "lot_txt": lot_txt}
@@ -1319,7 +1171,7 @@ def construire_guide(pair, cond, tfs, sltp):
     return g
 
 
-# ───────────── ANALYSE ─────────────
+# ───────────── ANALYSE PRINCIPALE ─────────────
 
 def analyser_paire(pair, source, historique=None, autres_cond=None):
     series, resultats = {}, {}
@@ -1340,7 +1192,7 @@ def analyser_paire(pair, source, historique=None, autres_cond=None):
     generale = calc_tendance_generale(resultats)
     cond = conditions_paire(resultats, fr["etat"] == "ferme", generale)
     prix = fp(pair, resultats["M5"]["prix"]) if "M5" in resultats else "—"
-    niv = sltp = bt = heures = guide = filtres = None
+    niv = sltp = bt = heures = guide = None
     h1, m15 = series.get("H1", []), series.get("M15", [])
     if "M5" in resultats and len(h1) >= 30 and len(m15) >= 30:
         p = resultats["M5"]["prix"]
@@ -1349,16 +1201,9 @@ def analyser_paire(pair, source, historique=None, autres_cond=None):
         heures = calc_heures(h1)
         bt = backtest(series, pair)
         cond["alertes"] = alertes_signal(cond, resultats, niv, sltp, bt, mouvement_moyen(h1, 24))
-        sens_sig = None
-        if cond["signal"] == "ACHAT":
-            sens_sig = "haussier"
-        elif cond["signal"] == "VENTE":
-            sens_sig = "baissier"
-        filtres = filtre_global(resultats, cond, pair, sens_sig, historique or [], autres_cond or {})
         guide = construire_guide(pair, cond, resultats, sltp)
     return {"tfs": resultats, "stats": stats, "fraicheur": fr, "cond": cond, "prix": prix,
-            "niv": niv, "sltp": sltp, "bt": bt, "heures": heures, "guide": guide,
-            "generale": generale, "filtres": filtres}
+            "niv": niv, "sltp": sltp, "bt": bt, "heures": heures, "guide": guide, "generale": generale}
 
 
 def analyser_securise(pair, source, historique=None, autres_cond=None):
@@ -1368,7 +1213,7 @@ def analyser_securise(pair, source, historique=None, autres_cond=None):
         print(f"Erreur {pair}: {e}")
         return {"tfs": {}, "stats": None, "fraicheur": {"texte": "Erreur", "etat": "ferme"},
                 "cond": conditions_paire({}), "prix": "—", "niv": None, "sltp": None,
-                "bt": None, "heures": None, "guide": None, "generale": None, "filtres": None}
+                "bt": None, "heures": None, "guide": None, "generale": None}
 
 
 def analyser_tout():
@@ -1398,13 +1243,12 @@ def analyser_tout():
             if j["pair"] == pair:
                 dernier = j
                 break
-        nouveau_verdict = conseil["verdict"]
-        if dernier is None or dernier["verdict"] != nouveau_verdict or (maintenant - dernier["t"]) > 3600:
-            entree = {"t": maintenant, "heure": maintenant_txt, "pair": pair,
-                      "verdict": nouveau_verdict, "couleur": conseil["couleur"],
-                      "message": conseil["message"], "action": conseil["action"],
-                      "raisons": conseil["raisons"], "prix": d["prix"]}
-            journal.append(entree)
+        nv = conseil["verdict"]
+        if dernier is None or dernier["verdict"] != nv or (maintenant - dernier["t"]) > 3600:
+            journal.append({"t": maintenant, "heure": maintenant_txt, "pair": pair,
+                            "verdict": nv, "couleur": conseil["couleur"],
+                            "message": conseil["message"], "action": conseil["action"],
+                            "raisons": conseil["raisons"], "prix": d["prix"]})
     journal = journal[-JOURNAL_MAX:]
     session["journal"] = journal
 
@@ -1447,11 +1291,10 @@ def dashboard():
     paires = analyser_tout()
     journal = session.get("journal", [])
     session_act = session_actuelle()
-    top_pat = top_patterns()
     total_obs, total_sig = total_observations()
     return render_template("dashboard.html", paires=paires, now=datetime.now(BENIN).strftime("%H:%M"),
                            journal=journal[-30:], session_act=session_act,
-                           top_patterns=top_pat, total_obs=total_obs, total_sig=total_sig)
+                           total_obs=total_obs, total_sig=total_sig)
 
 
 @app.route("/patterns")
@@ -1460,8 +1303,10 @@ def patterns_page():
         return redirect(url_for("index"))
     top_pat = top_patterns()
     total_obs, total_sig = total_observations()
+    par_paire = observations_par_paire()
     return render_template("patterns.html", top_patterns=top_pat,
                            total_obs=total_obs, total_sig=total_sig,
+                           par_paire=par_paire,
                            now=datetime.now(BENIN).strftime("%H:%M"))
 
 
@@ -1469,10 +1314,9 @@ def patterns_page():
 def pattern_detail(signature):
     if not logged():
         return redirect(url_for("index"))
-    par_paire = stats_par_pattern(signature)
-    par_heure = stats_par_heure(signature)
+    occ = pattern_occurrences_recentes(signature)
     return jsonify({"signature": signature, "texte": pattern_vers_txt(signature),
-                    "par_paire": par_paire, "par_heure": par_heure})
+                    "occurrences": occ})
 
 
 @app.route("/api/backfill")
@@ -1481,15 +1325,16 @@ def api_backfill():
         return "non autorisé", 403
     t = threading.Thread(target=backfill_patterns, daemon=True)
     t.start()
-    return jsonify({"status": "backfill lancé en arrière-plan"})
+    return jsonify({"status": "backfill lancé"})
 
 
 @app.route("/api/backfill_status")
 def api_backfill_status():
     if not logged():
         return "non autorisé", 403
-    total_obs, total_sig = total_observations()
-    return jsonify({"total_observations": total_obs, "total_signatures": total_sig})
+    n, ns = total_observations()
+    return jsonify({"total_observations": n, "total_signatures": ns,
+                    "par_paire": observations_par_paire()})
 
 
 @app.route("/ping")
@@ -1503,23 +1348,21 @@ def cron():
     return "ok", 200
 
 
-# ───────────── DÉMARRAGE : BACKFILL AUTOMATIQUE ─────────────
+# ───────────── DÉMARRAGE ─────────────
 
 def demarrer_backfill_si_vide():
-    """Au démarrage, si la base est vide, lance le backfill en arrière-plan."""
     try:
-        total, _ = total_observations()
-        if total == 0:
-            print("📭 Base vide → lancement du backfill automatique")
+        n, _ = total_observations()
+        if n == 0:
+            print("📭 Base vide → lancement backfill")
             t = threading.Thread(target=backfill_patterns, daemon=True)
             t.start()
         else:
-            print(f"✅ Base existante : {total} observations")
+            print(f"✅ Base : {n} observations")
     except Exception as e:
-        print(f"Erreur démarrage backfill: {e}")
+        print(f"Backfill auto erreur : {e}")
 
 
-# Lance au démarrage (gunicorn importe app.py)
 try:
     demarrer_backfill_si_vide()
 except Exception as e:
