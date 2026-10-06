@@ -12,7 +12,7 @@ header{display:flex;justify-content:space-between;align-items:center;padding:.8r
 header h1{font-size:1rem}
 .time{color:var(--muted);font-size:.85rem;margin-right:.5rem}
 .countdown{background:rgba(0,212,255,.1);padding:.3rem .7rem;border-radius:50px;font-size:.75rem;color:var(--cyan);margin-right:.5rem}
-.son{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);color:#fff;padding:.3rem .7rem;border-radius:50px;font-size:.75rem;cursor:pointer;margin-right:.5rem}
+.son{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);color:#fff;padding:.3rem .7rem;border-radius:50px;font-size:.75rem;cursor:pointer;margin-right:.5rem;text-decoration:none}
 .logout{color:var(--red);text-decoration:none}
 main{max-width:1200px;margin:0 auto}
 .compte{display:flex;flex-wrap:wrap;gap:.6rem;align-items:flex-end;background:var(--card);border-radius:12px;padding:.6rem 1rem;margin-bottom:1rem;max-width:1200px;margin-left:auto;margin-right:auto}
@@ -22,6 +22,9 @@ main{max-width:1200px;margin:0 auto}
 .bandeau-session{background:var(--card);border-radius:12px;padding:.6rem 1rem;margin-bottom:1rem;font-size:.82rem;border-left:4px solid var(--yellow)}
 .bandeau-session.vert{border-left-color:var(--green);color:#a0e8a8}
 .bandeau-session.jaune{border-left-color:var(--yellow);color:#f0d590}
+.bandeau-patterns{background:var(--card);border-radius:12px;padding:.6rem 1rem;margin-bottom:1rem;font-size:.82rem;border-left:4px solid var(--violet);color:#d8d0ff}
+.bandeau-patterns.jaune{border-left-color:var(--yellow);color:#f0d590}
+.bandeau-patterns a{color:var(--cyan);text-decoration:none;font-weight:600}
 
 .journal{background:var(--card);border-radius:12px;padding:.8rem 1rem;margin-bottom:1rem;border:2px solid rgba(0,212,255,.2)}
 .journal summary{cursor:pointer;color:var(--cyan);font-weight:700;font-size:.9rem}

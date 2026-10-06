@@ -4,6 +4,7 @@
 <h1>🤖 Multi-TF Bot Guide</h1>
 <div>
 <span class="time">{{ now }}</span>
+<a href="/patterns" class="son">🔬 Patterns</a>
 <button id="son" class="son" type="button">🔕 Son</button>
 <span class="countdown">🔄 <span id="countdown">5min 0s</span></span>
 <a href="/logout" class="logout">🚪</a>
@@ -17,6 +18,18 @@
 </div>
 
 <main>
+
+{% if total_obs > 0 %}
+<div class="bandeau-patterns">
+🔬 <b>{{ total_obs }}</b> observations, <b>{{ total_sig }}</b> signatures distinctes.
+<a href="/patterns">Voir les patterns fiables →</a>
+</div>
+{% else %}
+<div class="bandeau-patterns jaune">
+🔬 Le bot apprend. Base vide pour l'instant.
+<a href="/api/backfill">Lancer le backfill manuellement</a>
+</div>
+{% endif %}
 
 <div class="bandeau-session {{ 'vert' if session_act.qualite in ('forte','excellente') else 'jaune' }}">
 🕐 <b>Session :</b> {{ session_act.txt }}
@@ -123,7 +136,6 @@
 </div>
 <div class="general-score">
 Score : <b class="{{ gen.couleur }}">{{ '%+.1f'|format(gen.score_pct) }}%</b>
-<span class="pct">(M5×5 M15×4 M30×3 H1×2 H4×1)</span>
 </div>
 </div>
 <div class="general-align">
@@ -163,7 +175,6 @@ Score : <b class="{{ gen.couleur }}">{{ '%+.1f'|format(gen.score_pct) }}%</b>
 <li><b>Si ça tourne mal :</b> stop touché → accepte la perte, arrête-toi 30 min sur cette paire.</li>
 <li><b>Règle de survie :</b> max 1 % par trade. Après 2 pertes de suite, arrête pour la journée.</li>
 </ol>
-<div class="note">Teste en démo 2-3 semaines minimum. Le bot filtre, il ne garantit rien. La discipline compte plus que le signal.</div>
 </div>
 {% endif %}
 
@@ -219,7 +230,6 @@ Score : <b class="{{ gen.couleur }}">{{ '%+.1f'|format(gen.score_pct) }}%</b>
 <div class="tile"><small>Stop & objectif</small><b>{{ d.bt.sim_tp }} TP · {{ d.bt.sim_sl }} SL</b></div>
 <div class="tile"><small>Gain moyen</small><b class="{{ d.bt.sim_couleur }}">{{ '%+.2f'|format(d.bt.sim_r) if d.bt.sim_r else '—' }} R</b></div>
 </div>
-<div class="note">{{ d.bt.verdict }} {{ d.bt.sim_verdict }} Le spread n'est pas compté.</div>
 {% else %}
 <div class="note">Pas assez de données pour backtester.</div>
 {% endif %}
@@ -227,47 +237,49 @@ Score : <b class="{{ gen.couleur }}">{{ '%+.1f'|format(gen.score_pct) }}%</b>
 </section>
 {% endfor %}
 
-<details class="aide">
-<summary>ℹ️ Comment lire le bot</summary>
-<ul>
-<li><b>🤖 Le bot te dit quoi faire</b> : "ENTRE MAINTENANT" (vert), "PRUDENCE — DEMI-LOT" (jaune), "N'ENTRE PAS" (rouge), "ATTENDRE" (gris).</li>
-<li><b>Chaque conseil est unique</b> : il combine session + timing + tendance H4/H1 + volatilité + résistance + ratio + corrélation.</li>
-<li><b>📒 Le journal du bot</b> garde la trace de ses conseils.</li>
-<li><b>🔥 Timing d'entrée</b> : ≤5 bougies M5 depuis le croisement EMA = frais (lot plein), 6-12 = en cours (demi-lot), >12 = tardif (n'entre pas).</li>
-<li>Toutes les bougies en cours sont ignorées : seules les clôturées comptent.</li>
-<li>Teste en démo 2-3 semaines minimum.</li>
-</ul>
-</details>
-
 </main>
 <script>
 var sec = 300;
 var audioCtx = null;
 var sonOn = false;
+var dernieresAlertes = {};
 try { sonOn = localStorage.getItem('son') === '1'; } catch (e) {}
 
 function majBouton() {
   var b = document.getElementById('son');
   if (b) b.textContent = sonOn ? '🔔 Son activé' : '🔕 Son';
 }
-function bip() {
+function bip(niveau) {
   try {
     if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     if (audioCtx.state === 'suspended') audioCtx.resume();
-    [0, 0.25, 0.5].forEach(function (d) {
+    var freqs = niveau === 'fort' ? [660, 880, 1100, 1320] : (niveau === 'moyen' ? [550, 770] : [440]);
+    freqs.forEach(function (f, i) {
       var o = audioCtx.createOscillator();
       var g = audioCtx.createGain();
-      o.frequency.value = 880; g.gain.value = 0.2;
+      o.frequency.value = f;
+      g.gain.value = 0.25;
       o.connect(g); g.connect(audioCtx.destination);
-      o.start(audioCtx.currentTime + d);
-      o.stop(audioCtx.currentTime + d + 0.15);
+      o.start(audioCtx.currentTime + i * 0.18);
+      o.stop(audioCtx.currentTime + i * 0.18 + 0.15);
     });
-    if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
+    if (navigator.vibrate) navigator.vibrate(niveau === 'fort' ? [300, 100, 300, 100, 300] : [200, 100, 200]);
   } catch (e) {}
 }
 function lireSignaux() {
   var o = {};
   document.querySelectorAll('section.paire').forEach(function (s) { o[s.id] = s.dataset.signal; });
+  return o;
+}
+function lireVerdicts() {
+  var o = {};
+  document.querySelectorAll('.bot-conseil').forEach(function (el) {
+    var section = el.closest('section.paire');
+    if (section) {
+      var v = el.querySelector('.bot-verdict-txt');
+      if (v) o[section.id] = v.textContent.trim();
+    }
+  });
   return o;
 }
 function estSignal(x) { return x === 'ACHAT' || x === 'VENTE'; }
@@ -290,7 +302,7 @@ function calcLots() {
     if (niveau === 'DEMI') maxp = maxp / 2;
     if (!ct) { out.textContent = 'Lot non calculé. Perte max ' + maxp.toFixed(2) + ' $.'; return; }
     var lot = Math.floor(maxp / (dist * ct) * 100) / 100;
-    if (lot < 0.01) { out.textContent = 'Capital trop petit pour ce stop.'; return; }
+    if (lot < 0.01) { out.textContent = 'Capital trop petit pour ce stop : 0.01 lot minimum → tu risques plus que ' + risk + ' %.'; return; }
     var prefix = niveau === 'DEMI' ? 'Lot (demi) : ' : 'Lot : ';
     out.textContent = prefix + lot.toFixed(2) + ' → perte max ≈ ' + (lot * dist * ct).toFixed(2) + ' $ · gain ≈ ' + (lot * gain * ct).toFixed(2) + ' $';
   });
@@ -309,12 +321,12 @@ document.getElementById('son').addEventListener('click', function () {
   sonOn = !sonOn;
   try { localStorage.setItem('son', sonOn ? '1' : '0'); } catch (e) {}
   majBouton();
-  if (sonOn) bip();
+  if (sonOn) bip('moyen');
 });
 majBouton();
 
 var precedent = lireSignaux();
-if (sonOn && Object.keys(precedent).some(function (k) { return estSignal(precedent[k]); })) bip();
+var precedentsVerdicts = lireVerdicts();
 
 var enCours = false;
 async function rafraichir() {
@@ -330,16 +342,47 @@ async function rafraichir() {
     var tm = doc.querySelector('.time');
     if (tm) document.querySelector('.time').textContent = tm.textContent;
     calcLots();
-    var nouveau = lireSignaux();
+
+    var nouveaux = lireSignaux();
+    var nouveauxVerdicts = lireVerdicts();
     var alertes = [];
-    Object.keys(nouveau).forEach(function (k) {
-      if (estSignal(nouveau[k]) && precedent[k] !== nouveau[k]) alertes.push(nouveau[k] + ' ' + k);
+
+    Object.keys(nouveaux).forEach(function (k) {
+      // Signal nouveau
+      if (estSignal(nouveaux[k]) && precedent[k] !== nouveaux[k]) {
+        alertes.push('🔔 ' + nouveaux[k] + ' ' + k);
+      }
+      // Verdict changé
+      var vOld = precedentsVerdicts[k];
+      var vNew = nouveauxVerdicts[k];
+      if (vNew && vOld && vOld !== vNew) {
+        if (vNew.indexOf('ENTRE') >= 0) {
+          alertes.push('✅ ' + k + ' → ' + vNew);
+        } else if (vNew.indexOf('N\\'ENTRE') >= 0 || vNew.indexOf("N'ENTRE") >= 0) {
+          alertes.push('🚫 ' + k + ' → ' + vNew);
+        } else if (vNew.indexOf('PRUDENCE') >= 0) {
+          alertes.push('⚠️ ' + k + ' → ' + vNew);
+        }
+      }
     });
-    precedent = nouveau;
+
+    precedent = nouveaux;
+    precedentsVerdicts = nouveauxVerdicts;
+
     if (alertes.length) {
-      if (sonOn) bip();
-      document.title = '🔔 ' + alertes.join(', ');
-    } else { document.title = 'Multi-TF Bot'; }
+      if (sonOn) {
+        var fort = alertes.some(function (a) { return a.indexOf('✅') === 0; });
+        bip(fort ? 'fort' : 'moyen');
+      }
+      document.title = '🔔 ' + alertes.join(' · ');
+      var barre = document.createElement('div');
+      barre.style.cssText = 'position:fixed;top:0;left:0;right:0;background:linear-gradient(90deg,#00d4ff,#7b2ffc);color:#fff;padding:.6rem 1rem;font-weight:700;font-size:.85rem;z-index:9999;text-align:center;';
+      barre.textContent = alertes.join(' · ');
+      document.body.appendChild(barre);
+      setTimeout(function () { barre.remove(); }, 8000);
+    } else {
+      document.title = 'Multi-TF Bot';
+    }
     sec = 300;
   } catch (e) { sec = 60; }
   enCours = false;

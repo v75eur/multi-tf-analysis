@@ -1,0 +1,74 @@
+<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Patterns observés</title><link rel="stylesheet" href="/static/style.css"></head>
+<body>
+<header>
+<h1>🔬 Patterns observés</h1>
+<div>
+<span class="time">{{ now }}</span>
+<a href="/dashboard" class="son">← Dashboard</a>
+<a href="/logout" class="logout">🚪</a>
+</div>
+</header>
+
+<main>
+<div class="bandeau-session">
+📊 <b>{{ total_obs }}</b> observations · <b>{{ total_sig }}</b> signatures distinctes ·
+Analyse : H1 sur 1 an · Fenêtre 4h après le pattern
+</div>
+
+<div class="note" style="margin-bottom:1rem;">
+Le bot observe chaque bougie H1 clôturée depuis 1 an. Il note sa signature (tendance + EMA + acheteurs + agitation + motif), puis il regarde ce qui s'est passé dans les 4 heures qui suivent. Il compte combien de fois le prix est monté, descendu, et de combien. Les patterns affichés sont ceux vus au moins 10 fois. <b>Ce ne sont pas des prédictions garanties</b> — juste des statistiques honnêtes sur le passé.
+</div>
+
+{% if top_patterns %}
+<h3>🎯 Top patterns par fréquence d'apparition</h3>
+<div class="scroll">
+<table>
+<thead>
+<tr>
+<th>Pattern</th>
+<th>Nb</th>
+<th>Monte</th>
+<th>Descend</th>
+<th>Var moy 4h</th>
+<th>Amp moy 4h</th>
+<th>Biais</th>
+</tr>
+</thead>
+<tbody>
+{% for p in top_patterns %}
+<tr>
+<td style="white-space:normal;min-width:280px;">
+<b>{{ p.texte }}</b>
+<div class="pct">{{ p.signature }}</div>
+</td>
+<td><b>{{ p.n }}</b></td>
+<td class="vert"><b>{{ p.pct_haut }}%</b> <span class="pct">({{ p.n_haut }})</span></td>
+<td class="rouge"><b>{{ p.pct_bas }}%</b> <span class="pct">({{ p.n_bas }})</span></td>
+<td class="{{ 'vert' if p.var_moy >= 0 else 'rouge' }}"><b>{{ '%+.3f'|format(p.var_moy) }}%</b></td>
+<td>{{ p.amp_moy }}%</td>
+<td class="{{ p.biais_couleur }}"><b>{{ p.biais }}</b></td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
+{% else %}
+<div class="note">Pas encore assez d'observations. Le backfill est peut-être en cours. <a href="/api/backfill_status">Vérifier l'état</a> · <a href="/api/backfill">Relancer le backfill</a></div>
+{% endif %}
+
+<details class="aide" style="margin-top:1rem;">
+<summary>ℹ️ Comment lire ce tableau</summary>
+<ul>
+<li><b>Pattern</b> : combinaison de tendance + état EMA + force acheteurs + agitation + motif de bougie.</li>
+<li><b>Nb</b> : combien de fois ce pattern est apparu dans l'année observée.</li>
+<li><b>Monte / Descend</b> : pourcentage des fois où, 4h après le pattern, le prix était plus haut / plus bas.</li>
+<li><b>Var moy 4h</b> : variation moyenne du prix 4h après le pattern (en %).</li>
+<li><b>Amp moy 4h</b> : amplitude moyenne (haut-bas) sur les 4h qui suivent.</li>
+<li><b>Biais</b> : 📈 monte si ≥55% de hausses, 📉 descend si ≥55% de baisses, ↔️ plat sinon.</li>
+<li>Un pattern à 70%+ de fiabilité est <b>intéressant mais pas garanti</b>. Le marché change. À vérifier dans le contexte du moment.</li>
+<li>Le nombre d'occurrences compte : 10 observations = peu fiable, 100+ = plus sérieux.</li>
+</ul>
+</details>
+
+</main>
+</body></html>
