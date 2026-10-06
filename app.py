@@ -25,7 +25,6 @@ TIMEFRAMES = {
     "M5": ("5m", "7d", 300),
 }
 DERIV_COUNT = {"H4": 300, "H1": 300, "M30": 300, "M15": 400, "M5": 1000}
-PERIODE = 10
 EMA_COURT = 5
 EMA_LONG = 25
 DERIV_WS = "wss://api.derivws.com/trading/v1/options/ws/public"
@@ -34,6 +33,10 @@ _cache_yahoo = {}
 
 POIDS_TF = {"M5": 5, "M15": 4, "M30": 3, "H1": 2, "H4": 1}
 ORDRE_TF = ["M5", "M15", "M30", "H1", "H4"]
+
+# Nombre de bougies pour évaluer la force (par TF)
+PERIODE_FORCE = {"M5": 30, "M15": 30, "M30": 30, "H1": 20, "H4": 20}
+PERIODE_TENDANCE = {"M5": 20, "M15": 20, "M30": 20, "H1": 15, "H4": 15}
 
 CORRELATIONS = {"EURUSD": ["GBPUSD"], "GBPUSD": ["EURUSD"], "XAUUSD": [], "V75": []}
 
@@ -119,7 +122,7 @@ def bougies_fermees(bougies, gran):
     return bougies
 
 
-# ───────────── CALCULS ─────────────
+# ───────────── CALCULS AMÉLIORÉS ─────────────
 
 def calc_ema_serie(clotures, periode):
     if len(clotures) < periode:
@@ -156,35 +159,110 @@ def calc_ema_signal(clotures):
     return round(float(s5[-1]), 5), round(float(s25[-1]), 5), sig, depuis
 
 
-def calc_tendance(clotures):
-    x = np.arange(1, len(clotures) + 1)
-    pente = np.polyfit(x, np.array(clotures), 1)[0]
-    pct = float(min(100, abs(pente) / np.mean(clotures) * 10000))
-    if pente > 0:
-        return "haussier", round(pct, 1)
-    if pente < 0:
-        return "baissier", round(pct, 1)
-    return "neutre", 0.0
-
-
-def calc_acheteurs(bougies, periode=10):
+def calc_acheteurs_pondere(bougies, periode=20):
+    """Calcul pondéré du % acheteurs/vendeurs.
+    Prend en compte :
+    - taille de chaque bougie (haut-bas)
+    - position de la clôture dans le range (mèches)
+    - corps de la bougie
+    Retourne : (acheteurs_pct, vendeurs_pct, force_brute)"""
     d = bougies[-periode:]
-    v = sum(1 for b in d if b["close"] > b["open"])
-    r = sum(1 for b in d if b["close"] < b["open"])
-    t = len(d) or 1
-    return v, r, round(v / t * 100, 1), round(r / t * 100, 1)
+    if len(d) < 5:
+        return 50.0, 50.0, 0.0
+
+    # Volatilité moyenne pour normaliser les poids
+    amplitudes = [b["high"] - b["low"] for b in d]
+    amp_moy = float(np.mean(amplitudes))
+    if amp_moy <= 0:
+        return 50.0, 50.0, 0.0
+
+    ach = 0.0
+    ven = 0.0
+    for b in d:
+        rng = b["high"] - b["low"]
+        if rng <= 0:
+            continue
+        # Position de la clôture dans le range (0 = plus bas, 1 = plus haut)
+        pos = (b["close"] - b["low"]) / rng
+        # Corps (en valeur absolue normalisée)
+        corps = abs(b["close"] - b["open"]) / rng
+        # Poids de la bougie (taille relative à la moyenne, plafonnée à 3x)
+        poids = min(rng / amp_moy, 3.0)
+
+        # Signal haussier = position haute + corps vert
+        signal_haussier = pos
+        signal_baissier = 1 - pos
+
+        # Amplification si la bougie a un vrai corps
+        if b["close"] > b["open"]:
+            signal_haussier *= (1 + corps)
+        elif b["close"] < b["open"]:
+            signal_baissier *= (1 + corps)
+
+        ach += signal_haussier * poids
+        ven += signal_baissier * poids
+
+    total = ach + ven
+    if total <= 0:
+        return 50.0, 50.0, 0.0
+    pct_ach = round(ach / total * 100, 1)
+    pct_ven = round(100 - pct_ach, 1)
+    force = round(min(100, abs(pct_ach - 50) * 2), 1)
+    return pct_ach, pct_ven, force
+
+
+def calc_tendance_ponderee(bougies, periode=15):
+    """Tendance via régression linéaire + accélération.
+    Retourne : (sens, pente_pct, acceleration, puissance)"""
+    if len(bougies) < periode:
+        return "neutre", 0.0, 0.0, 0.0
+    cl = [b["close"] for b in bougies[-periode:]]
+    x = np.arange(1, len(cl) + 1)
+    try:
+        pente = float(np.polyfit(x, np.array(cl), 1)[0])
+    except Exception:
+        return "neutre", 0.0, 0.0, 0.0
+
+    # Pente en % du prix moyen
+    prix_moy = float(np.mean(cl))
+    if prix_moy <= 0:
+        return "neutre", 0.0, 0.0, 0.0
+    pente_pct = round(pente / prix_moy * 10000, 2)
+
+    # Accélération : pente récente (moitié) vs pente ancienne (moitié)
+    demi = max(3, len(cl) // 2)
+    try:
+        p_recent = float(np.polyfit(np.arange(demi), np.array(cl[-demi:]), 1)[0])
+        p_ancien = float(np.polyfit(np.arange(demi), np.array(cl[:demi]), 1)[0])
+        accel = round((p_recent - p_ancien) / prix_moy * 10000, 2)
+    except Exception:
+        accel = 0.0
+
+    # Puissance : amplitude totale / volatilité moyenne
+    amplitudes = [b["high"] - b["low"] for b in bougies[-periode:]]
+    amp_moy = float(np.mean(amplitudes))
+    net = abs(cl[-1] - cl[0])
+    puissance = round(min(100, net / amp_moy * 20), 1) if amp_moy > 0 else 0.0
+
+    if pente_pct > 0.02:
+        sens = "haussier"
+    elif pente_pct < -0.02:
+        sens = "baissier"
+    else:
+        sens = "neutre"
+    return sens, pente_pct, accel, puissance
 
 
 def calc_agitation(bougies, periode=10):
     d = bougies[-periode:]
     if len(d) < 2:
-        return 0, 0.0
+        return 0.0
     total = sum(b["high"] - b["low"] for b in d)
     if total == 0:
-        return 0, 0.0
+        return 0.0
     net = abs(d[-1]["close"] - d[0]["open"])
     efficacite = min(100.0, net / total * 100)
-    return 0, round(100 - efficacite, 1)
+    return round(100 - efficacite, 1)
 
 
 def trouver_creux(bougies, fenetre=50, largeur=3):
@@ -210,16 +288,16 @@ def calc_divergence(bougies, creux, sommets):
     if len(creux) >= 2:
         c1, c2 = creux[-2], creux[-1]
         if bougies[c2]["low"] < bougies[c1]["low"]:
-            r1 = calc_acheteurs(bougies[:c1 + 1])[2]
-            r2 = calc_acheteurs(bougies[:c2 + 1])[2]
+            r1, _, _ = calc_acheteurs_pondere(bougies[:c1 + 1], min(10, c1 + 1))
+            r2, _, _ = calc_acheteurs_pondere(bougies[:c2 + 1], min(10, c2 + 1))
             if r2 > r1:
                 div_h = True
     div_b = False
     if len(sommets) >= 2:
         s1, s2 = sommets[-2], sommets[-1]
         if bougies[s2]["high"] > bougies[s1]["high"]:
-            r1 = calc_acheteurs(bougies[:s1 + 1])[2]
-            r2 = calc_acheteurs(bougies[:s2 + 1])[2]
+            r1, _, _ = calc_acheteurs_pondere(bougies[:s1 + 1], min(10, s1 + 1))
+            r2, _, _ = calc_acheteurs_pondere(bougies[:s2 + 1], min(10, s2 + 1))
             if r2 < r1:
                 div_b = True
     if div_h:
@@ -280,23 +358,42 @@ def calc_cassure(bougies, n=20):
 
 
 def analyser(tf, bougies):
+    """Analyse complète d'un TF avec les nouveaux calculs pondérés."""
     if len(bougies) < 30:
         return None
     clotures = [b["close"] for b in bougies]
-    tendance, pct_tendance = calc_tendance(clotures[-PERIODE:])
-    v, r, pa, pv = calc_acheteurs(bougies)
-    c, ag = calc_agitation(bougies)
+
+    # NOUVEAU : % acheteurs/vendeurs pondéré
+    periode_force = PERIODE_FORCE.get(tf, 20)
+    pa, pv, force_brute = calc_acheteurs_pondere(bougies, periode_force)
+
+    # NOUVEAU : tendance pondérée avec accélération et puissance
+    periode_tend = PERIODE_TENDANCE.get(tf, 15)
+    tendance, pente_pct, accel, puissance = calc_tendance_ponderee(bougies, periode_tend)
+
+    # Agitation
+    ag = calc_agitation(bougies)
+
+    # Divergences et motifs
     creux = trouver_creux(bougies)
     sommets = trouver_sommets(bougies)
     divergence = calc_divergence(bougies, creux, sommets)
     ema5, ema25, ema_sig, ema_depuis = calc_ema_signal(clotures)
     motifs, grande, taille_x, mh, mb = calc_motifs(bougies)
+
     return {
-        "tf": tf, "tendance": tendance, "pct_tendance": pct_tendance,
-        "pct_acheteurs": pa, "pct_vendeurs": pv,
+        "tf": tf,
+        "tendance": tendance,
+        "pente_pct": pente_pct,
+        "acceleration": accel,
+        "puissance": puissance,
+        "pct_acheteurs": pa,
+        "pct_vendeurs": pv,
+        "force_brute": force_brute,
         "pct_agitation": ag,
         "divergence": divergence,
-        "ema5": ema5, "ema25": ema25, "ema_signal": ema_sig, "ema_depuis": ema_depuis,
+        "ema5": ema5, "ema25": ema25,
+        "ema_signal": ema_sig, "ema_depuis": ema_depuis,
         "motifs": motifs, "grande": grande, "taille_x": taille_x,
         "motif_haussier": mh, "motif_baissier": mb,
         "cassure": calc_cassure(bougies),
@@ -322,40 +419,80 @@ def calc_timing_entree(m5):
 
 
 def calc_tendance_generale(tfs):
+    """Tendance générale pondérée par intensité + poids de TF.
+    Nouveau calcul : chaque TF vote avec un score entre -1 et +1 proportionnel
+    à son écart acheteurs/vendeurs ET sa puissance."""
     if not tfs:
         return None
+
     poids_total = 0
     somme_ach = 0.0
     somme_ven = 0.0
+    score_pondere = 0.0
+    poids_score_total = 0.0
+
     for tf, data in tfs.items():
         p = POIDS_TF.get(tf, 1)
         poids_total += p
         somme_ach += data["pct_acheteurs"] * p
         somme_ven += data["pct_vendeurs"] * p
+
+        # Vote pondéré par intensité ET puissance
+        # écart entre -100 et +100
+        ecart = data["pct_acheteurs"] - data["pct_vendeurs"]
+        # normalise entre -1 et +1
+        vote_intensite = ecart / 100
+        # amplifier par la puissance (0-1)
+        puissance_norm = min(1.0, data.get("puissance", 0) / 100)
+        # et par la cohérence tendance
+        coef_tendance = 1.0 if data["tendance"] == ("haussier" if ecart > 0 else "baissier") else 0.5
+
+        vote_final = vote_intensite * (0.5 + puissance_norm) * coef_tendance
+
+        # Poids final du TF = poids × force (plus le TF est fort, plus il pèse)
+        force_tf = 0.5 + min(1.0, data.get("force_brute", 0) / 100)
+        poids_final = p * force_tf
+
+        score_pondere += vote_final * poids_final
+        poids_score_total += poids_final
+
     if poids_total == 0:
         return None
+
     ach_gen = round(somme_ach / poids_total, 1)
     ven_gen = round(somme_ven / poids_total, 1)
-    score = 0
-    score_max = 0
-    for tf, data in tfs.items():
-        p = POIDS_TF.get(tf, 1)
-        score_max += p
-        if data["tendance"] == "haussier":
-            score += p
-        elif data["tendance"] == "baissier":
-            score -= p
-    score_pct = round(score / score_max * 100, 1) if score_max else 0.0
-    if score_pct >= 60:
+    score_pct = round(score_pondere / poids_score_total * 100, 1) if poids_score_total > 0 else 0.0
+
+    # Bonus de cohérence : si tous les TF alignés dans le même sens
+    sens_tendance = [t["tendance"] for t in tfs.values()]
+    nb_haut = sum(1 for s in sens_tendance if s == "haussier")
+    nb_bas = sum(1 for s in sens_tendance if s == "baissier")
+    total_tf = len(sens_tendance)
+    coherence_bonus = 0.0
+    if nb_haut == total_tf:
+        coherence_bonus = 15
+    elif nb_bas == total_tf:
+        coherence_bonus = -15
+    elif nb_haut >= total_tf - 1 and nb_haut > nb_bas:
+        coherence_bonus = 7
+    elif nb_bas >= total_tf - 1 and nb_bas > nb_haut:
+        coherence_bonus = -7
+
+    score_pct_final = round(score_pct + coherence_bonus, 1)
+
+    # Classement final
+    if score_pct_final >= 60:
         tendance, couleur = "ACHAT FORT", "vert"
-    elif score_pct >= 25:
+    elif score_pct_final >= 25:
         tendance, couleur = "ACHAT", "vert"
-    elif score_pct <= -60:
+    elif score_pct_final <= -60:
         tendance, couleur = "VENTE FORTE", "rouge"
-    elif score_pct <= -25:
+    elif score_pct_final <= -25:
         tendance, couleur = "VENTE", "rouge"
     else:
         tendance, couleur = "NEUTRE", ""
+
+    # Alignement progressif
     alignement = {"haussier": 0, "baissier": 0, "detail": []}
     for sens in ("haussier", "baissier"):
         compte = 0
@@ -376,6 +513,8 @@ def calc_tendance_generale(tfs):
         align_sens, align_n = "baissier", alignement["baissier"]
     else:
         align_sens, align_n = None, 0
+
+    # Confirmation croisement M5
     confirmation = None
     trois = ["M15", "M30", "H1"]
     if all(tf in tfs for tf in trois) and "M5" in tfs:
@@ -388,7 +527,18 @@ def calc_tendance_generale(tfs):
             if m5["ema_signal"] == "baissier" and (m5["ema_depuis"] or 99) <= 3:
                 confirmation = {"sens": "VENTE", "couleur": "rouge",
                                 "txt": "M15+M30+H1 baissiers + croisement EMA M5 baissier récent."}
-    return {"ach_gen": ach_gen, "ven_gen": ven_gen, "score_pct": score_pct,
+
+    # Puissance globale (moyenne pondérée)
+    puissance_globale = 0.0
+    for tf, data in tfs.items():
+        p = POIDS_TF.get(tf, 1)
+        puissance_globale += data.get("puissance", 0) * p
+    puissance_globale = round(puissance_globale / poids_total, 1) if poids_total else 0.0
+
+    return {"ach_gen": ach_gen, "ven_gen": ven_gen,
+            "score_pct": score_pct_final, "score_brut": score_pct,
+            "coherence_bonus": coherence_bonus,
+            "puissance_globale": puissance_globale,
             "tendance": tendance, "couleur": couleur,
             "align_sens": align_sens, "align_n": align_n,
             "align_detail": alignement["detail"], "confirmation": confirmation}
@@ -460,6 +610,10 @@ def generer_conseil(pair, d, session_act, autres_cond, historique):
     if h1_data and h1_data.get("pct_agitation", 0) > SEUIL_AGITATION_MAX:
         raisons.append(f"Marché trop agité (agitation H1 {h1_data['pct_agitation']}%).")
 
+    # Puissance faible = prudence
+    if gen.get("puissance_globale", 0) < 15:
+        raisons.append(f"Puissance faible ({gen['puissance_globale']}%) : le mouvement manque d'énergie.")
+
     cote = sltp["achat" if achat else "vente"] if sltp else None
     if cote is None:
         raisons.append("Pas d'objectif clair devant le prix.")
@@ -493,7 +647,7 @@ def generer_conseil(pair, d, session_act, autres_cond, historique):
     if bt and bt["n"] >= 10 and bt["pct"] is not None and bt["pct"] < 45:
         raisons.append(f"Sur le passé, ce signal n'a réussi que {bt['pct']}% du temps.")
 
-    bloquants = [r for r in raisons if "pullback" in r or "trop avancé" in r or "pas d'objectif" in r.lower() or "doubler ton risque" in r or "peu fiables" in r]
+    bloquants = [r for r in raisons if "pullback" in r or "trop avancé" in r or "pas d'objectif" in r.lower() or "doubler ton risque" in r or "peu fiables" in r or "manque d'énergie" in r]
     avertissements = [r for r in raisons if r not in bloquants]
 
     if timing and timing["niveau"] == "TARDIF":
@@ -513,7 +667,7 @@ def generer_conseil(pair, d, session_act, autres_cond, historique):
 
     lot_msg = "lot plein" if not timing or timing["niveau"] == "FRAIS" else "demi-lot"
     return {"verdict": "ENTRE MAINTENANT", "couleur": "vert", "action": f"ACHAT/VENTE AU MARCHÉ — {lot_msg.upper()}",
-            "message": f"Setup propre sur {pair}. Signal {sig}, timing {timing['niveau'] if timing else 'OK'}, tout est aligné. Entre à la clôture M5 avec le {lot_msg}.",
+            "message": f"Setup propre sur {pair}. Signal {sig}, timing {timing['niveau'] if timing else 'OK'}, puissance {gen.get('puissance_globale', 0)}%. Entre à la clôture M5 avec le {lot_msg}.",
             "raisons": raisons or ["Tous les filtres au vert."]}
 
 
@@ -680,13 +834,11 @@ def backtest(series, pair="", horizon=12, test=1000, max_trade=48):
             if len(sl) < 30:
                 ok = False
                 break
-            tend = tendance_simple([b["close"] for b in sl[-PERIODE:]])
-            d = sl[-PERIODE:]
-            v = sum(1 for b in d if b["close"] > b["open"])
-            r = sum(1 for b in d if b["close"] < b["open"])
-            if tend > 0 and v > r:
+            tend = tendance_simple([b["close"] for b in sl[-PERIODE_TENDANCE.get(tf, 15):]])
+            pa, pv, _ = calc_acheteurs_pondere(sl, PERIODE_FORCE.get(tf, 20))
+            if tend > 0 and pa > pv:
                 etats.add(1)
-            elif tend < 0 and r > v:
+            elif tend < 0 and pv > pa:
                 etats.add(-1)
             else:
                 etats.add(0)

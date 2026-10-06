@@ -112,33 +112,56 @@
 {% if gen %}
 <div class="general {{ gen.couleur }}">
 <div class="general-titre">
-🧮 Tendance générale
+🧮 Tendance générale pondérée
 <span class="general-badge {{ gen.couleur }}">{{ gen.tendance }}</span>
 </div>
+
 <div class="general-jauge">
-<div class="general-barre"><i class="ach" style="width:{{ gen.ach_gen }}%"></i></div>
+<div class="general-barre">
+<i class="ach" style="width:{{ gen.ach_gen }}%"></i>
+</div>
 <div class="general-chiffres">
 <span class="vert">🟢 Acheteurs {{ gen.ach_gen }}%</span>
 <span class="rouge">🔴 Vendeurs {{ gen.ven_gen }}%</span>
 </div>
 <div class="general-score">
-Score : <b class="{{ gen.couleur }}">{{ '%+.1f'|format(gen.score_pct) }}%</b>
-<span class="pct">(M5×5 M15×4 M30×3 H1×2 H4×1)</span>
+Score pondéré : <b class="{{ gen.couleur }}">{{ '%+.1f'|format(gen.score_pct) }}%</b>
+{% if gen.coherence_bonus != 0 %}<span class="pct">(cohérence {{ '%+.0f'|format(gen.coherence_bonus) }})</span>{% endif %}
+<span class="pct">· Puissance <b>{{ gen.puissance_globale }}%</b></span>
+</div>
+<div class="general-score pct" style="margin-top:.2rem;">
+Méthode : pondération par TF (M5×5 M15×4 M30×3 H1×2 H4×1) + intensité acheteurs/vendeurs + puissance + cohérence
 </div>
 </div>
+
 <div class="general-align">
-<b>Alignement progressif :</b>
+<b>Alignement progressif (du plus petit au plus grand) :</b>
 <div class="align-chaine">
 {% for a in gen.align_detail %}
 <span class="align-item {{ 'vert' if a.sens == 'haussier' else 'rouge' if a.sens == 'baissier' else 'neutre' }}">
-{{ a.tf }}{% if a.sens == 'haussier' %}↑{% elif a.sens == 'baissier' %}↓{% else %}→{% endif %}
+{{ a.tf }}
+{% if a.sens == 'haussier' %}↑{% elif a.sens == 'baissier' %}↓{% else %}→{% endif %}
 </span>
 {% if not loop.last %}<span class="align-fleche">→</span>{% endif %}
 {% endfor %}
 </div>
+{% if gen.align_n >= 3 and gen.align_sens %}
+<div class="align-verdict {{ 'vert' if gen.align_sens == 'haussier' else 'rouge' }}">
+✅ {{ gen.align_n }} TF consécutifs alignés {{ 'haussier' if gen.align_sens == 'haussier' else 'baissier' }} ({{ gen.align_sens }}) — mouvement récent cohérent.
 </div>
+{% elif gen.align_n > 0 and gen.align_sens %}
+<div class="align-verdict jaune">
+⚠️ Seulement {{ gen.align_n }} TF aligné(s) {{ gen.align_sens }} — pas encore de consensus progressif.
+</div>
+{% else %}
+<div class="align-verdict jaune">⏸️ Aucun alignement progressif net pour le moment.</div>
+{% endif %}
+</div>
+
 {% if gen.confirmation %}
-<div class="confirmation {{ gen.confirmation.couleur }}">✅ {{ gen.confirmation.txt }}</div>
+<div class="confirmation {{ gen.confirmation.couleur }}">
+{{ gen.confirmation.txt }}
+</div>
 {% endif %}
 </div>
 {% endif %}
@@ -179,10 +202,10 @@ Score : <b class="{{ gen.couleur }}">{{ '%+.1f'|format(gen.score_pct) }}%</b>
 </div>
 {% endif %}
 
-<h3>⏱️ Analyse par timeframe</h3>
+<h3>⏱️ Analyse par timeframe (calculs pondérés)</h3>
 <div class="scroll">
 <table>
-<thead><tr><th>TF</th><th>Poids</th><th>Tendance</th><th>Ach/Ven</th><th>Agit</th><th>EMA5</th><th>EMA25</th><th>Signal EMA</th><th>Bougie</th></tr></thead>
+<thead><tr><th>TF</th><th>Poids</th><th>Tendance</th><th>Pente</th><th>Accél</th><th>Puissance</th><th>Ach/Ven</th><th>Force</th><th>Agit</th><th>Signal EMA</th><th>Bougie</th></tr></thead>
 <tbody>
 {% for tf in ["H4", "H1", "M30", "M15", "M5"] %}
 {% if tf in tfs %}
@@ -191,10 +214,12 @@ Score : <b class="{{ gen.couleur }}">{{ '%+.1f'|format(gen.score_pct) }}%</b>
 <td><b>{{ t.tf }}</b></td>
 <td><span class="poids">×{{ {'H4':1,'H1':2,'M30':3,'M15':4,'M5':5}[tf] }}</span></td>
 <td>{{ t.tendance }}</td>
+<td class="{{ 'vert' if t.pente_pct > 0 else 'rouge' if t.pente_pct < 0 else '' }}">{{ '%+.2f'|format(t.pente_pct) }}</td>
+<td class="{{ 'vert' if t.acceleration > 0.01 else 'rouge' if t.acceleration < -0.01 else '' }}">{{ '%+.2f'|format(t.acceleration) }}</td>
+<td><b class="{{ 'vert' if t.puissance >= 30 else 'rouge' if t.puissance < 10 else '' }}">{{ t.puissance }}%</b></td>
 <td><small><span class="vert">{{ t.pct_acheteurs }}</span>/<span class="rouge">{{ t.pct_vendeurs }}</span></small></td>
+<td>{{ t.force_brute }}%</td>
 <td>{{ t.pct_agitation }}%</td>
-<td>{{ t.ema5 or '—' }}</td>
-<td>{{ t.ema25 or '—' }}</td>
 <td class="{% if t.ema_signal == 'haussier' %}vert{% elif t.ema_signal == 'baissier' %}rouge{% endif %}"><b>{{ t.ema_signal or '—' }}</b>
 {% if tf == 'M5' and t.ema_depuis is not none %}
 {% set dep = t.ema_depuis %}
@@ -228,11 +253,22 @@ Score : <b class="{{ gen.couleur }}">{{ '%+.1f'|format(gen.score_pct) }}%</b>
 {% endfor %}
 
 <details class="aide">
-<summary>ℹ️ Comment lire le bot</summary>
+<summary>ℹ️ Comment lire le bot — Calculs pondérés</summary>
 <ul>
 <li><b>🤖 Le bot te dit quoi faire</b> : "ENTRE MAINTENANT" (vert), "PRUDENCE — DEMI-LOT" (jaune), "N'ENTRE PAS" (rouge), "ATTENDRE" (gris).</li>
-<li><b>Chaque conseil est unique</b> : il combine session + timing + tendance H4/H1 + volatilité + résistance + ratio + corrélation.</li>
-<li><b>📒 Le journal du bot</b> garde la trace de ses conseils.</li>
+<li><b>📊 % Acheteurs/Vendeurs pondéré</b> : nouveau calcul qui prend en compte la taille de chaque bougie, la position de la clôture dans son range (les mèches), le corps de la bougie, et la volatilité relative. Ce n'est plus un simple comptage vert/rouge.</li>
+<li><b>📈 Pente</b> : régression linéaire en % du prix. Positif = haussier, négatif = baissier.</li>
+<li><b>⚡ Accélération</b> : la pente récente comparée à la pente ancienne. Positif = le mouvement s'accélère, négatif = il ralentit.</li>
+<li><b>💪 Puissance</b> : amplitude nette du mouvement divisée par la volatilité moyenne. 0-100%. Élevé = mouvement fort et directionnel, faible = marché qui hésite.</li>
+<li><b>Force brute</b> : intensité du déséquilibre acheteurs/vendeurs, de 0 à 100%.</li>
+<li><b>🧮 Tendance générale pondérée</b> : combine TOUS les TF avec :
+  <ul>
+    <li>Un poids par TF (M5×5, M15×4, M30×3, H1×2, H4×1) — les petits pèsent plus lourd</li>
+    <li>L'intensité de l'écart acheteurs/vendeurs (pas juste +1/-1)</li>
+    <li>La puissance du TF (un TF faible pèse moins)</li>
+    <li>Un bonus de cohérence (+15% si tous alignés dans le même sens)</li>
+  </ul>
+</li>
 <li><b>🔥 Timing d'entrée</b> : ≤5 bougies M5 depuis le croisement EMA = frais (lot plein), 6-12 = en cours (demi-lot), >12 = tardif (n'entre pas).</li>
 <li>Toutes les bougies en cours sont ignorées : seules les clôturées comptent.</li>
 <li>Teste en démo 2-3 semaines minimum.</li>
